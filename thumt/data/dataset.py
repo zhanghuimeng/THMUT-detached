@@ -187,7 +187,7 @@ def sort_input_file(filename, reverse=True):
         sorted_inputs.append(inputs[index])
         sorted_keys[index] = i
 
-    return sorted_keys, sorted_inputs
+    return sorted_keys, sorted_inputs, sorted_input_lens
 
 
 def sort_and_zip_files(names):

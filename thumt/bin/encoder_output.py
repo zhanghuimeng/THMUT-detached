@@ -271,7 +271,13 @@ def main(args):
 
         params = params_list[0]
         # Read input file
-        sorted_keys, sorted_inputs = dataset.sort_input_file(args.input)
+        sorted_keys, sorted_inputs, sorted_input_len = dataset.sort_input_file(args.input)
+        # debug: print sorted_inputs
+        # sorted_input_len[i][1] = len
+        # for i, inp in enumerate(sorted_inputs):
+        #     print("len: %d, inp: %s" % (sorted_input_len[i][1], inp))
+        # for i, (_, l) in enumerate(sorted_input_len):
+        #     print("ids: %d, len: %d" % (i, l))
         # Build input queue
         features = dataset.get_inference_input(sorted_inputs, params)
         # Create placeholders
@@ -348,23 +354,33 @@ def main(args):
         # print encoder_outputs
         encoder_outputs = []
 
-        # TODO: the inputs are sorted.
-
         # each shard saved the values returned by create_encoder_graph (create_inference_graph)
         for result in results:
             # the shard does not have extra length when there is not more than one return values
+            # I guess there is nothing to do with multiple models...
             for shard in result:
-                print(shard.shape)
-                # for item in shard:
-                # print(item.shape)
-                encoder_outputs.append(shard)
-        # stack the batches up
-        # encoder_outputs = np.concatenate(encoder_outputs, axis=0)
-        # print(encoder_outputs.shape)
+                batch = np.split(shard, shard.shape[0], axis=0)
+                batch = [np.squeeze(hidden, axis=0) for hidden in batch]
+                encoder_outputs += batch
+
+        # sort the sentences back (save the <eos> part)
+        restored_inputs = []
+        restored_encoder_outputs = []
+
+        for i in range(len(encoder_outputs)):
+            # print(sorted_input_len[i][1], len(encoder_outputs[i]))
+            encoder_outputs[i] = encoder_outputs[i][:sorted_input_len[i][1]+1][:]
+
+        for index in range(len(sorted_inputs)):
+            restored_inputs.append(sorted_inputs[sorted_keys[index]])
+            restored_encoder_outputs.append(encoder_outputs[sorted_keys[index]])
+            # print(len(restored_inputs[-1].split()), restored_encoder_outputs[-1].shape)
+
+        tf.logging.log(tf.logging.INFO, "Evaluated hidden representation of %d sentences" % len(restored_encoder_outputs))
 
         # Write to file
-        # np.savetxt(args.output, encoder_outputs, delimiter=",")
-
+        np.save(args.output, np.array(restored_encoder_outputs))
+        tf.logging.log(tf.logging.INFO, "Printed representation to %s" % args.output)
 
 if __name__ == "__main__":
     main(parse_args())
