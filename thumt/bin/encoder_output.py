@@ -213,6 +213,43 @@ def shard_features(features, placeholders, predictions):
     return predictions, feed_dict
 
 
+def write_enc_output_to_tfrecord_file(output, file):
+    """
+    https://gist.github.com/swyoon/8185b3dcf08ec728fb22b99016dd533f
+    :param output: A list of 2d np arrays, each of shape [len+1, 512].
+    :param file: The output file.
+    :return:
+    """
+
+    def _dtype_feature(ndarray):
+        """match appropriate tf.train.Feature class with dtype of ndarray. """
+        assert isinstance(ndarray, np.ndarray)
+        dtype_ = ndarray.dtype
+        if dtype_ == np.float64 or dtype_ == np.float32:
+            return lambda array: tf.train.Feature(float_list=tf.train.FloatList(value=array))
+        elif dtype_ == np.int64:
+            return lambda array: tf.train.Feature(int64_list=tf.train.Int64List(value=array))
+        else:
+            raise ValueError("The input should be numpy ndarray. \
+                               Instead got {}".format(ndarray.dtype))
+
+    dtype_feature_x = _dtype_feature(output[0])
+    dtype_feature_l = _dtype_feature(np.asarray(output[0].shape))
+    writer = tf.python_io.TFRecordWriter(file)
+    print("Serializing {:d} examples into {}".format(len(output), file))
+
+    for i in range(len(output)):
+        d_feature = {}
+        d_feature['len'] = dtype_feature_l(np.asarray(output[i].shape))
+        d_feature['x'] = dtype_feature_x(output[i].reshape(-1))
+        features = tf.train.Features(feature=d_feature)
+        example = tf.train.Example(features=features)
+        serialized = example.SerializeToString()
+        writer.write(serialized)
+
+    print("Writing {} done!".format(file))
+
+
 def main(args):
     tf.logging.set_verbosity(tf.logging.INFO)
     # Load configs
@@ -378,9 +415,23 @@ def main(args):
 
         tf.logging.log(tf.logging.INFO, "Evaluated hidden representation of %d sentences" % len(restored_encoder_outputs))
 
-        # Write to file
-        np.save(args.output, np.array(restored_encoder_outputs))
+        # Write to a tfrecord file
+        # np.save(args.output, np.array(restored_encoder_outputs))
+        write_enc_output_to_tfrecord_file(restored_encoder_outputs, args.output)
         tf.logging.log(tf.logging.INFO, "Printed representation to %s" % args.output)
+
+        i = 0
+        for serialized_example in tf.python_io.tf_record_iterator(args.output):
+            example = tf.train.Example()
+            example.ParseFromString(serialized_example)
+            x = np.array(example.features.feature['x'].float_list.value)
+            l = np.array(example.features.feature['len'].int64_list.value)
+            print("i=%d" % i)
+            print("x=", x)
+            print("len=", l)
+            if i >= 5:
+                break
+            i += 1
 
 if __name__ == "__main__":
     main(parse_args())

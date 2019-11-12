@@ -101,6 +101,9 @@ def transformer_decoder(inputs, memory, bias, mem_bias, params, state=None,
                         if params.position_info_type == 'relative' else None
 
                 with tf.variable_scope("self_attention"):
+                    # debug
+                    print("transformer_decoder self_attention:", layer_name)
+                    print("x=", x)
                     y = layers.attention.multihead_attention(
                         _layer_process(x, params.layer_preprocess),
                         None,
@@ -122,6 +125,11 @@ def transformer_decoder(inputs, memory, bias, mem_bias, params, state=None,
                     x = _layer_process(x, params.layer_postprocess)
 
                 with tf.variable_scope("encdec_attention"):
+                    # debug
+                    # 此处的memory是输入的encoder_output，mem_bias是输入的enc_attn_bias
+                    print("transformer_decoder encdec_attention:", layer_name)
+                    print("x=", x)
+                    print("memory=", memory)
                     y = layers.attention.multihead_attention(
                         _layer_process(x, params.layer_preprocess),
                         memory,
@@ -269,6 +277,8 @@ def decoding_graph(features, state, mode, params):
     encoder_output = state["encoder"]
 
     if mode != "infer":
+        # debug
+        print(encoder_output)
         decoder_output = transformer_decoder(decoder_input, encoder_output,
                                              dec_attn_bias, enc_attn_bias,
                                              params)
@@ -319,6 +329,19 @@ def model_graph(features, mode, params):
     return output
 
 
+def decoder_graph(features, mode, params):
+    # 从model_graph抄的
+    # 应该只需要encoder的输入就可以了吧……？
+    # encoder_output = encoding_graph(features, mode, params)
+    encoder_output = features["source"]
+    state = {
+        "encoder": encoder_output
+    }
+    output = decoding_graph(features, state, mode, params)
+
+    return output
+
+
 class Transformer(NMTModel):
 
     def __init__(self, params, scope="transformer"):
@@ -337,6 +360,23 @@ class Transformer(NMTModel):
                                    regularizer=regularizer, reuse=reuse,
                                    custom_getter=custom_getter, dtype=dtype):
                 loss = model_graph(features, "train", params)
+                return loss
+
+        return training_fn
+
+    def get_decoder_training_func(self, initializer, regularizer=None, dtype=None):
+        def training_fn(features, params=None, reuse=None):
+            if params is None:
+                params = copy.copy(self.parameters)
+            else:
+                params = copy.copy(params)
+
+            custom_getter = utils.custom_getter if dtype else None
+
+            with tf.variable_scope(self._scope, initializer=initializer,
+                                   regularizer=regularizer, reuse=reuse,
+                                   custom_getter=custom_getter, dtype=dtype):
+                loss = decoder_graph(features, "train", params)
                 return loss
 
         return training_fn

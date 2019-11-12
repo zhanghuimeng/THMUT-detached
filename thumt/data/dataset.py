@@ -169,6 +169,106 @@ def get_training_input(filenames, params):
         return features
 
 
+def get_decoder_training_input(filenames, params):
+    """ Get input for decoder training stage
+
+    :param filenames: A list contains [encoder_output_filename, target_filenames]
+    :param params: Hyper-parameters
+
+    :returns: A dictionary of pair <Key, Tensor>
+    """
+
+    with tf.device("/cpu:0"):
+        src_dataset = tf.data.TFRecordDataset(filenames[0])
+        tgt_dataset = tf.data.TextLineDataset(filenames[1])
+
+        # special decoding for src_dataset
+        # Create a dictionary describing the features.
+        feature_description = {
+            'x': tf.FixedLenSequenceFeature([], tf.float32, allow_missing=True),
+            'len': tf.FixedLenFeature([2], tf.int64),
+        }
+
+        def _parse_function(example_proto):
+            return tf.parse_single_example(example_proto, feature_description)
+
+        src_dataset = src_dataset.map(_parse_function)
+
+        def convert_1d_array_to_2d(array, shape):
+            # convert back to [len+1, 512] shape
+            return tf.reshape(array, [-1, 512])
+
+        src_dataset = src_dataset.map(lambda d: convert_1d_array_to_2d(d["x"], d["len"]))
+
+        dataset = tf.data.Dataset.zip((src_dataset, tgt_dataset))
+
+        if distribute.is_distributed_training_mode():
+            dataset = dataset.shard(distribute.size(), distribute.rank())
+
+        dataset = dataset.shuffle(params.buffer_size)
+        dataset = dataset.repeat()
+
+        # Split string
+        dataset = dataset.map(
+            lambda src, tgt: (
+                src,
+                tf.string_split([tgt]).values
+            ),
+            num_parallel_calls=params.num_threads
+        )
+
+        # Append <eos> symbol
+        dataset = dataset.map(
+            lambda src, tgt: (
+                src,
+                tf.concat([tgt, [tf.constant(params.eos)]], axis=0)
+            ),
+            num_parallel_calls=params.num_threads
+        )
+
+        # Convert to dictionary
+        dataset = dataset.map(
+            lambda src, tgt: {
+                "source": src,
+                "target": tgt,
+                "source_length": tf.shape(src)[0],
+                "target_length": tf.shape(tgt)
+            },
+            num_parallel_calls=params.num_threads
+        )
+
+        # Create iterator
+        iterator = dataset.make_one_shot_iterator()
+        features = iterator.get_next()
+
+        # Create lookup table
+        tgt_table = tf.contrib.lookup.index_table_from_tensor(
+            tf.constant(params.vocabulary["target"]),
+            default_value=params.mapping["target"][params.unk]
+        )
+
+        # String to index lookup
+        features["target"] = tgt_table.lookup(features["target"])
+
+        # Batching
+        features = batch_examples(features, params.batch_size,
+                                  params.max_length, params.mantissa_bits,
+                                  shard_multiplier=len(params.device_list),
+                                  length_multiplier=params.length_multiplier,
+                                  constant=params.constant_batch_size,
+                                  num_threads=params.num_threads)
+
+        # Convert to int32
+        # features["source"] = tf.to_int32(features["source"])
+        features["target"] = tf.to_int32(features["target"])
+        features["source_length"] = tf.to_int32(features["source_length"])
+        features["target_length"] = tf.to_int32(features["target_length"])
+        # features["source_length"] = tf.squeeze(features["source_length"], 1)
+        features["target_length"] = tf.squeeze(features["target_length"], 1)
+
+        return features
+
+
 def sort_input_file(filename, reverse=True):
     # Read file
     with tf.gfile.Open(filename) as fd:
@@ -201,6 +301,44 @@ def sort_and_zip_files(names):
         lines = [line.strip() for line in lines]
         input_lens.append((count, len(lines[0].split())))
         inputs.append(lines)
+        count += 1
+
+    # Close files
+    for fd in files:
+        fd.close()
+
+    sorted_input_lens = sorted(input_lens, key=operator.itemgetter(1),
+                               reverse=True)
+    sorted_inputs = []
+
+    for i, (index, _) in enumerate(sorted_input_lens):
+        sorted_inputs.append(inputs[index])
+
+    return [list(x) for x in zip(*sorted_inputs)]
+
+
+def sort_and_zip_files_for_decoder(names):
+    # 是从sort_and_zip_files抄来的
+    # 第一个file是tfrecords，其他的file不是
+    # input = [enc_output, target]
+    inputs = []
+    input_lens = []
+    count = 0
+    example = tf.train.Example()
+    for serialized_example in tf.python_io.tf_record_iterator(names[0]):
+        example.ParseFromString(serialized_example)
+        x = np.array(example.features.feature['x'].float_list.value)
+        x = np.reshape(x, [-1, 512])
+        inputs.append([x])
+        input_lens.append((count, x.shape[0]))
+        count += 1
+
+    files = [tf.gfile.GFile(name) for name in names[1:]]
+
+    count = 0
+    for lines in zip(*files):
+        lines = [line.strip() for line in lines]
+        inputs[count] += lines
         count += 1
 
     # Close files
@@ -270,6 +408,60 @@ def get_evaluation_input(inputs, params):
         )
 
         features["source"] = src_table.lookup(features["source"])
+
+    return features
+
+
+def get_evaluation_input_decoder(inputs, params):
+    # 从get_evaluation_input抄过来的
+    # 第一个dataset是enc_output
+    with tf.device("/cpu:0"):
+        # Create datasets
+        datasets = []
+
+        datasets.append(tf.data.Dataset.from_tensor_slices(inputs[0]))
+
+        for data in inputs[1:]:
+            dataset = tf.data.Dataset.from_tensor_slices(data)
+            # Split string
+            dataset = dataset.map(lambda x: tf.string_split([x]).values,
+                                  num_parallel_calls=params.num_threads)
+            # Append <eos>
+            dataset = dataset.map(
+                lambda x: tf.concat([x, [tf.constant(params.eos)]], axis=0),
+                num_parallel_calls=params.num_threads
+            )
+            datasets.append(dataset)
+
+        dataset = tf.data.Dataset.zip(tuple(datasets))
+
+        # Convert tuple to dictionary
+        dataset = dataset.map(
+            lambda *x: {
+                "source": x[0],
+                "source_length": tf.shape(x[0])[0],
+                "references": x[1:]
+            },
+            num_parallel_calls=params.num_threads
+        )
+
+        # 并不知道这个source的padding shape应该是什么。。。
+        dataset = dataset.padded_batch(
+            params.eval_batch_size,
+            {
+                "source": [tf.Dimension(None), tf.Dimension(None)],
+                "source_length": [],
+                "references": (tf.Dimension(None),) * (len(inputs) - 1)
+            },
+            {
+                "source": 0.0,
+                "source_length": 0,
+                "references": (params.pad,) * (len(inputs) - 1)
+            }
+        )
+
+        iterator = dataset.make_one_shot_iterator()
+        features = iterator.get_next()
 
     return features
 
