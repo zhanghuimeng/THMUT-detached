@@ -465,7 +465,8 @@ def main(args):
                 train_hooks.append(
                     hooks.MultiStepHook(
                         hooks.EvaluationHook(
-                            lambda f: inference.create_inference_graph(
+                            # changed the inference graph
+                            lambda f: inference.create_decoder_inference_graph(
                                 [model], f, params
                             ),
                             lambda: eval_input_fn(eval_inputs, params),
@@ -474,7 +475,8 @@ def main(args):
                             session_config(params),
                             params.keep_top_checkpoint_max,
                             eval_secs=params.eval_secs,
-                            eval_steps=params.eval_steps
+                            eval_steps=params.eval_steps,
+                            placeholder="representation",  # modified here
                         ),
                         step=params.update_cycle
                     )

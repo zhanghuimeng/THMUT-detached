@@ -263,3 +263,73 @@ def create_inference_graph(models, features, params):
                                max_length, alpha, pad_id, bos_id, eos_id)
 
     return seqs[:, :top_beams, 1:], scores[:, :top_beams]
+
+
+def create_decoder_inference_graph(models, features, params):
+    # 从create_inference_graph抄的，修改了其中beam search的部分
+    if not isinstance(models, (list, tuple)):
+        raise ValueError("'models' must be a list or tuple")
+
+    # debug
+    print("create_decoder_inference_graph, features: ")
+    print(str(features))
+
+    features = copy.copy(features)
+    model_fns = [model.get_decoder_inference_func() for model in models]
+
+    decode_length = params.decode_length
+    beam_size = params.beam_size
+    top_beams = params.top_beams
+    alpha = params.decode_alpha
+
+    # Compute initial state if necessary
+    states = []
+    funcs = []
+
+    for model_fn in model_fns:
+        if callable(model_fn):
+            # For non-incremental decoding
+            states.append({})
+            funcs.append(model_fn)
+        else:
+            # For incremental decoding where model_fn is a tuple:
+            # (encoding_fn, decoding_fn)
+            states.append(model_fn[0](features))
+            funcs.append(model_fn[1])
+
+    batch_size = tf.shape(features["source"])[0]
+    pad_id = params.mapping["target"][params.pad]
+    bos_id = params.mapping["target"][params.bos]
+    eos_id = params.mapping["target"][params.eos]
+
+    # Expand the inputs
+    # [batch, length, hidden] => [batch, beam_size, length, hidden]
+    features["source"] = tf.expand_dims(features["source"], 1)
+    features["source"] = tf.tile(features["source"], [1, beam_size, 1, 1])
+    shape = tf.shape(features["source"])
+    print("Beam search tiled shape: ", shape)
+
+    # [batch, beam_size, length, hidden] => [batch * beam_size, length, hidden]
+    features["source"] = tf.reshape(features["source"],
+                                    [shape[0] * shape[1], shape[2], shape[3]])
+
+    # For source sequence length
+    features["source_length"] = tf.expand_dims(features["source_length"], 1)
+    features["source_length"] = tf.tile(features["source_length"],
+                                        [1, beam_size])
+    shape = tf.shape(features["source_length"])
+
+    max_length = features["source_length"] + decode_length
+
+    # [batch, beam_size, length] => [batch * beam_size, length]
+    features["source_length"] = tf.reshape(features["source_length"],
+                                           [shape[0] * shape[1]])
+    decoding_fn = _get_inference_fn(funcs, features)
+    states = nest.map_structure(
+        lambda x: utils.tile_to_beam_size(x, beam_size),
+        states)
+
+    seqs, scores = beam_search(decoding_fn, states, batch_size, beam_size,
+                               max_length, alpha, pad_id, bos_id, eos_id)
+
+    return seqs[:, :top_beams, 1:], scores[:, :top_beams]

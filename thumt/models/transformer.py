@@ -432,6 +432,45 @@ class Transformer(NMTModel):
 
         return encoding_fn, decoding_fn
 
+    def get_decoder_inference_func(self):
+        # 从get_inference_func抄的，只改了一点点
+        def encoding_fn(features, params=None):
+            if params is None:
+                params = copy.copy(self.parameters)
+            else:
+                params = copy.copy(params)
+
+            with tf.variable_scope(self._scope):
+                # encoder_output = encoding_graph(features, "infer", params)
+                encoder_output = features["source"]
+                batch = tf.shape(encoder_output)[0]
+
+                state = {
+                    "encoder": encoder_output,
+                    "decoder": {
+                        "layer_%d" % i: {
+                            "key": tf.zeros([batch, 0, params.attention_key_channels or params.hidden_size]),
+                            "value": tf.zeros([batch, 0, params.attention_value_channels or params.hidden_size])
+                        }
+                        for i in range(params.num_decoder_layers)
+                    }
+                }
+            return state
+
+        def decoding_fn(features, state, params=None):
+            if params is None:
+                params = copy.copy(self.parameters)
+            else:
+                params = copy.copy(params)
+
+            with tf.variable_scope(self._scope):
+                log_prob, new_state = decoding_graph(features, state, "infer",
+                                                     params)
+
+            return log_prob, new_state
+
+        return encoding_fn, decoding_fn
+
     @staticmethod
     def get_name():
         return "transformer"

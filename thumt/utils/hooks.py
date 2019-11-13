@@ -130,15 +130,24 @@ def _add_to_record(records, record, max_to_keep):
     return added, removed, records
 
 
-def _evaluate(eval_fn, input_fn, decode_fn, path, config):
+def _evaluate(eval_fn, input_fn, decode_fn, path, config, placeholder):
+    # placeholder指的是这里的placeholder是用句子作为source，还是用中间表示作为source
     graph = tf.Graph()
     with graph.as_default():
         features = input_fn()
         refs = features["references"]
-        placeholders = {
-            "source": tf.placeholder(tf.int32, [None, None], "source"),
-            "source_length": tf.placeholder(tf.int32, [None], "source_length")
-        }
+        if placeholder == "sentence":
+            placeholders = {
+                "source": tf.placeholder(tf.int32, [None, None], "source"),
+                "source_length": tf.placeholder(tf.int32, [None], "source_length")
+            }
+        elif placeholder == "representation":
+            placeholders = {
+                "source": tf.placeholder(tf.float32, [None, None, 512], "source"),
+                "source_length": tf.placeholder(tf.int32, [None], "source_length")
+            }
+        else:
+            raise ValueError("placeholder should either be 'sentence' or 'representation'.")
         predictions = eval_fn(placeholders)
         predictions = predictions[0][:, 0, :]
 
@@ -185,7 +194,7 @@ class EvaluationHook(tf.train.SessionRunHook):
 
     def __init__(self, eval_fn, eval_input_fn, eval_decode_fn, base_dir,
                  session_config, max_to_keep=5, eval_secs=None,
-                 eval_steps=None, metric="BLEU"):
+                 eval_steps=None, metric="BLEU", placeholder="sentence"):
         """ Initializes a `EvaluationHook`.
         :param eval_fn: A function with signature (feature)
         :param eval_input_fn: A function with signature ()
@@ -196,6 +205,7 @@ class EvaluationHook(tf.train.SessionRunHook):
         :param eval_secs: An integer, eval every N secs.
         :param eval_steps: An integer, eval every N steps.
         :param checkpoint_basename: `str`, base name for the checkpoint files.
+        :param placeholder: what placeholder should the _evaluate function use.
         :raises ValueError: One of `save_steps` or `save_secs` should be set.
         :raises ValueError: At most one of saver or scaffold should be set.
         """
@@ -218,6 +228,7 @@ class EvaluationHook(tf.train.SessionRunHook):
         self._timer = tf.train.SecondOrStepTimer(
             every_secs=eval_secs or None, every_steps=eval_steps or None
         )
+        self._placeholder = placeholder
 
     def begin(self):
         if self._timer.last_triggered_step() is None:
@@ -267,7 +278,8 @@ class EvaluationHook(tf.train.SessionRunHook):
                 score = _evaluate(self._eval_fn, self._eval_input_fn,
                                   self._eval_decode_fn,
                                   self._base_dir,
-                                  self._session_config)
+                                  self._session_config,
+                                  self._placeholder)
                 tf.logging.info("%s at step %d: %f" %
                                 (self._metric, global_step, score))
 
@@ -320,7 +332,8 @@ class EvaluationHook(tf.train.SessionRunHook):
             score = _evaluate(self._eval_fn, self._eval_input_fn,
                               self._eval_decode_fn,
                               self._base_dir,
-                              self._session_config)
+                              self._session_config,
+                              self._placeholder)
             tf.logging.info("%s at step %d: %f" %
                             (self._metric, global_step, score))
 

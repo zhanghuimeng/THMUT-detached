@@ -320,39 +320,42 @@ def sort_and_zip_files(names):
 def sort_and_zip_files_for_decoder(names):
     # 是从sort_and_zip_files抄来的
     # 第一个file是tfrecords，其他的file不是
-    # input = [enc_output, target]
     inputs = []
     input_lens = []
-    count = 0
-    example = tf.train.Example()
-    for serialized_example in tf.python_io.tf_record_iterator(names[0]):
-        example.ParseFromString(serialized_example)
-        x = np.array(example.features.feature['x'].float_list.value)
-        x = np.reshape(x, [-1, 512])
-        inputs.append([x])
-        input_lens.append((count, x.shape[0]))
-        count += 1
-
     files = [tf.gfile.GFile(name) for name in names[1:]]
 
     count = 0
+
     for lines in zip(*files):
         lines = [line.strip() for line in lines]
-        inputs[count] += lines
+        input_lens.append((count, len(lines[0].split())))
+        inputs.append(lines)
         count += 1
 
     # Close files
     for fd in files:
         fd.close()
 
-    sorted_input_lens = sorted(input_lens, key=operator.itemgetter(1),
-                               reverse=True)
-    sorted_inputs = []
+    src_dataset = tf.data.TFRecordDataset(names[0])
 
-    for i, (index, _) in enumerate(sorted_input_lens):
-        sorted_inputs.append(inputs[index])
+    # Create a dictionary describing the features.
+    feature_description = {
+        'x': tf.FixedLenSequenceFeature([], tf.float32, allow_missing=True),
+        'len': tf.FixedLenFeature([2], tf.int64),
+    }
 
-    return [list(x) for x in zip(*sorted_inputs)]
+    def _parse_function(example_proto):
+        return tf.parse_single_example(example_proto, feature_description)
+
+    src_dataset = src_dataset.map(_parse_function)
+
+    def convert_1d_array_to_2d(array, shape):
+        # convert back to [len+1, 512] shape
+        return tf.reshape(array, [-1, 512])
+
+    src_dataset = src_dataset.map(lambda d: convert_1d_array_to_2d(d["x"], d["len"]))
+
+    return src_dataset, [list(x) for x in zip(*inputs)]
 
 
 def get_evaluation_input(inputs, params):
@@ -414,14 +417,14 @@ def get_evaluation_input(inputs, params):
 
 def get_evaluation_input_decoder(inputs, params):
     # 从get_evaluation_input抄过来的
-    # 第一个dataset是enc_output
+    # inputs = (src_dataset, [datas])
     with tf.device("/cpu:0"):
         # Create datasets
         datasets = []
 
-        datasets.append(tf.data.Dataset.from_tensor_slices(inputs[0]))
+        datasets.append(inputs[0])
 
-        for data in inputs[1:]:
+        for data in inputs[1]:
             dataset = tf.data.Dataset.from_tensor_slices(data)
             # Split string
             dataset = dataset.map(lambda x: tf.string_split([x]).values,
@@ -449,7 +452,7 @@ def get_evaluation_input_decoder(inputs, params):
         dataset = dataset.padded_batch(
             params.eval_batch_size,
             {
-                "source": [tf.Dimension(None), tf.Dimension(None)],
+                "source": [tf.Dimension(None), 512],  # or can't be fed into transformer
                 "source_length": [],
                 "references": (tf.Dimension(None),) * (len(inputs) - 1)
             },
@@ -462,6 +465,10 @@ def get_evaluation_input_decoder(inputs, params):
 
         iterator = dataset.make_one_shot_iterator()
         features = iterator.get_next()
+
+    # debug
+    print("get_evaluation_input_decoder")
+    print("features: ", str(features))
 
     return features
 
