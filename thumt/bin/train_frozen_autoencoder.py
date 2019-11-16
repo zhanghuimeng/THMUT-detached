@@ -368,8 +368,7 @@ def main(args):
         distribute.enable_distributed_training()
 
     tf.logging.set_verbosity(tf.logging.INFO)
-    # model_cls = models.get_model(args.model, frozen=args.frozen)
-    model_cls = models.get_model(args.model)
+    model_cls = models.get_model(args.model, frozen=args.frozen)
     params = default_parameters()
 
     # Import and override parameters
@@ -447,12 +446,17 @@ def main(args):
 
         # Optimization
         # Freeze encoder and source_embedding
-        not_frozen_list = []
-        for v in tf.trainable_variables():
-            if not ("transformer/source_embedding" in v.name or "transformer/encoder/" in v.name):
-                not_frozen_list.append(v)
+        # not_frozen_list = []
+        # for v in tf.trainable_variables():
+        #     if not ("transformer/source_embedding" in v.name or "transformer/encoder/" in v.name):
+        #         not_frozen_list.append(v)
+        # grads_and_vars = opt.compute_gradients(
+        #     loss, var_list=not_frozen_list, colocate_gradients_with_ops=True)
         grads_and_vars = opt.compute_gradients(
-            loss, var_list=not_frozen_list, colocate_gradients_with_ops=True)
+            loss, colocate_gradients_with_ops=True)
+        # Check if encoder is frozen
+        print("Frozen check")
+        print_variables()
 
         if params.clip_grad_norm:
             grads, var_list = list(zip(*grads_and_vars))

@@ -8,7 +8,7 @@ from __future__ import print_function
 import tensorflow as tf
 
 
-def linear(inputs, output_size, bias, concat=True, dtype=None, scope=None):
+def linear(inputs, output_size, bias, concat=True, dtype=None, scope=None, frozen=False):
     """
     Linear layer
     :param inputs: A Tensor or a list of Tensors with shape [batch, input_size]
@@ -17,6 +17,7 @@ def linear(inputs, output_size, bias, concat=True, dtype=None, scope=None):
     :param concat: a boolean value indicate whether to concatenate all inputs
     :param dtype: an instance of tf.DType
     :param scope: the scope of this layer, the default value is ``linear''
+    :param frozen: A bool, whether this linear weight should be frozen
     :returns: a Tensor with shape [batch, output_size]
     :raises RuntimeError: raises ``RuntimeError'' when input sizes do not
                           compatible with each other
@@ -44,20 +45,20 @@ def linear(inputs, output_size, bias, concat=True, dtype=None, scope=None):
             inputs = tf.concat(inputs, 1)
 
             shape = [input_size, output_size]
-            matrix = tf.get_variable("matrix", shape)
+            matrix = tf.get_variable("matrix", shape, trainable=not frozen)
             results.append(tf.matmul(inputs, matrix))
         else:
             for i in range(len(input_size)):
                 shape = [input_size[i], output_size]
                 name = "matrix_%d" % i
-                matrix = tf.get_variable(name, shape)
+                matrix = tf.get_variable(name, shape, trainable=not frozen)
                 results.append(tf.matmul(inputs[i], matrix))
 
         output = tf.add_n(results)
 
         if bias:
             shape = [output_size]
-            bias = tf.get_variable("bias", shape)
+            bias = tf.get_variable("bias", shape, trainable=not frozen)
             output = tf.nn.bias_add(output, bias)
 
         output = tf.reshape(output, output_shape)
@@ -90,13 +91,14 @@ def maxout(inputs, output_size, maxpart=2, use_bias=True, concat=True,
     return output
 
 
-def layer_norm(inputs, epsilon=1e-6, dtype=None, scope=None):
+def layer_norm(inputs, epsilon=1e-6, dtype=None, scope=None, frozen=False):
     """
     Layer Normalization
     :param inputs: A Tensor of shape [..., channel_size]
     :param epsilon: A floating number
     :param dtype: An optional instance of tf.DType
     :param scope: An optional string
+    :param frozen: A bool, whether this linear weight should be frozen
     :returns: A Tensor with the same shape as inputs
     """
     with tf.variable_scope(scope, default_name="layer_norm", values=[inputs],
@@ -104,10 +106,10 @@ def layer_norm(inputs, epsilon=1e-6, dtype=None, scope=None):
         channel_size = inputs.get_shape().as_list()[-1]
 
         scale = tf.get_variable("scale", shape=[channel_size],
-                                initializer=tf.ones_initializer())
+                                initializer=tf.ones_initializer(), trainable=not frozen)
 
         offset = tf.get_variable("offset", shape=[channel_size],
-                                 initializer=tf.zeros_initializer())
+                                 initializer=tf.zeros_initializer(), trainable=not frozen)
 
         mean = tf.reduce_mean(inputs, -1, True)
         variance = tf.reduce_mean(tf.square(inputs - mean), -1, True)

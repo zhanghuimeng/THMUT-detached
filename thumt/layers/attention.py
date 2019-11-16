@@ -378,7 +378,7 @@ def multiplicative_attention(queries, keys, values, bias, keep_prob=None,
 def multihead_attention(queries, memories, bias, num_heads, key_size,
                         value_size, output_size, keep_prob=None, output=True,
                         state=None, summary=True, dtype=None, scope=None,
-                        max_relative_dis=None):
+                        max_relative_dis=None, frozen=False):
     """ Multi-head scaled-dot-product attention with input/output
         transformations.
 
@@ -396,6 +396,7 @@ def multihead_attention(queries, memories, bias, num_heads, key_size,
     :param dtype: An optional instance of tf.DType
     :param scope: An optional string
     :param max_relative_dis: An integer
+    :param frozen: A bool, whether this attention weight should be frozen
 
     :returns: A dict with the following keys:
         weights: A tensor with shape [batch, heads, length_q, length_kv]
@@ -417,7 +418,7 @@ def multihead_attention(queries, memories, bias, num_heads, key_size,
         if memories is None:
             # self attention
             size = key_size * 2 + value_size
-            combined = linear(queries, size, True, True, scope="qkv_transform")
+            combined = linear(queries, size, True, True, scope="qkv_transform", frozen=frozen)
             q, k, v = tf.split(combined, [key_size, key_size, value_size],
                                axis=-1)
 
@@ -427,9 +428,9 @@ def multihead_attention(queries, memories, bias, num_heads, key_size,
                 next_state["key"] = k
                 next_state["value"] = v
         else:
-            q = linear(queries, key_size, True, True, scope="q_transform")
+            q = linear(queries, key_size, True, True, scope="q_transform", frozen=frozen)
             combined = linear(memories, key_size + value_size, True,
-                              scope="kv_transform")
+                              scope="kv_transform", frozen=frozen)
             k, v = tf.split(combined, [key_size, value_size], axis=-1)
 
         # split heads
@@ -447,8 +448,8 @@ def multihead_attention(queries, memories, bias, num_heads, key_size,
 
         # relative position representation (only in self-attention)
         if max_relative_dis and memories is None:
-            rpr_k = tf.get_variable('rpr_k', [2*max_relative_dis+1, key_size//num_heads])
-            rpr_v = tf.get_variable('rpr_v', [2*max_relative_dis+1, value_size//num_heads])
+            rpr_k = tf.get_variable('rpr_k', [2*max_relative_dis+1, key_size//num_heads], trainable=not frozen)
+            rpr_v = tf.get_variable('rpr_v', [2*max_relative_dis+1, value_size//num_heads], trainable=not frozen)
             rpr_k = create_rpr(rpr_k, length_q, length_kv, max_relative_dis)
             rpr_v = create_rpr(rpr_v, length_q, length_kv, max_relative_dis)
             rpr = {'rpr_k': rpr_k, 'rpr_v': rpr_v}
@@ -464,7 +465,7 @@ def multihead_attention(queries, memories, bias, num_heads, key_size,
 
         if output:
             outputs = linear(x, output_size, True, True,
-                             scope="output_transform")
+                             scope="output_transform", frozen=frozen)
         else:
             outputs = x
 
