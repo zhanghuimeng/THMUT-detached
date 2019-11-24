@@ -11,9 +11,10 @@ import thumt.models.rnnsearch_lrp
 import thumt.models.transformer
 import thumt.models.transformer_lrp
 import thumt.models.transformer_frozen
+import thumt.models.transformer_adapt
 
 
-def get_model(name, lrp=False, frozen=False):
+def get_model(name, lrp=False, frozen=False, adapt=False):
     name = name.lower()
 
     if name == "rnnsearch":
@@ -24,10 +25,12 @@ def get_model(name, lrp=False, frozen=False):
     elif name == "seq2seq":
         return thumt.models.seq2seq.Seq2Seq
     elif name == "transformer":
-        if not lrp and not frozen:
+        if not lrp and not frozen and not adapt:
             return thumt.models.transformer.Transformer
         elif frozen:
             return thumt.models.transformer_frozen.Transformer
+        elif adapt:
+            return thumt.models.transformer_adapt.Transformer
         else:
             return thumt.models.transformer_lrp.TransformerLRP
     else:

@@ -9,6 +9,7 @@ from __future__ import print_function
 import argparse
 import itertools
 import os
+import six
 
 import tensorflow as tf
 import thumt.data.vocab as vocabulary
