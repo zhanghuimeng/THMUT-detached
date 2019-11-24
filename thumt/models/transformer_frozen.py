@@ -105,9 +105,6 @@ def transformer_decoder(inputs, memory, bias, mem_bias, params, state=None,
                         if params.position_info_type == 'relative' else None
 
                 with tf.variable_scope("self_attention"):
-                    # debug
-                    print("transformer_decoder self_attention:", layer_name)
-                    print("x=", x)
                     y = layers.attention.multihead_attention(
                         _layer_process(x, params.layer_preprocess),
                         None,
@@ -129,11 +126,7 @@ def transformer_decoder(inputs, memory, bias, mem_bias, params, state=None,
                     x = _layer_process(x, params.layer_postprocess)
 
                 with tf.variable_scope("encdec_attention"):
-                    # debug
                     # 此处的memory是输入的encoder_output，mem_bias是输入的enc_attn_bias
-                    print("transformer_decoder encdec_attention:", layer_name)
-                    print("x=", x)
-                    print("memory=", memory)
                     y = layers.attention.multihead_attention(
                         _layer_process(x, params.layer_preprocess),
                         memory,
@@ -281,8 +274,6 @@ def decoding_graph(features, state, mode, params):
     encoder_output = state["encoder"]
 
     if mode != "infer":
-        # debug
-        print(encoder_output)
         decoder_output = transformer_decoder(decoder_input, encoder_output,
                                              dec_attn_bias, enc_attn_bias,
                                              params)

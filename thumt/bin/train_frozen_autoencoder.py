@@ -331,13 +331,14 @@ def restore_encoder_variables(checkpoint):
     values = {}
 
     for (name, shape) in var_list:
-        if not ("transformer/source_embedding" in name or "transformer/encoder/" in name):
+        if not ("transformer/source_embedding" in name or "transformer/encoder/" in name
+                or "transformer/bias" in name):
             continue
         tensor = reader.get_tensor(name)
         name = name.split(":")[0]
         values[name] = tensor
 
-    var_list = tf.trainable_variables()
+    var_list = tf.global_variables()
     ops = []
 
     for var in var_list:
@@ -454,9 +455,6 @@ def main(args):
         #     loss, var_list=not_frozen_list, colocate_gradients_with_ops=True)
         grads_and_vars = opt.compute_gradients(
             loss, colocate_gradients_with_ops=True)
-        # Check if encoder is frozen
-        print("Frozen check")
-        print_variables()
 
         if params.clip_grad_norm:
             grads, var_list = list(zip(*grads_and_vars))
