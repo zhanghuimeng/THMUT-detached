@@ -50,8 +50,6 @@ def parse_args(args=None):
                         help="Path to encoder checkpoint")
     parser.add_argument("--dec_ckpt", type=str,  # dec
                         help="Path to decoder checkpoint")
-    parser.add_argument("--adapt_mode", type=str,  default="frozen",  # adaptation mode
-                        help="How to adapt two models")
     parser.add_argument("--half", action="store_true",
                         help="Enable FP16 training")
     parser.add_argument("--distribute", action="store_true",
@@ -478,7 +476,7 @@ def main(args):
             opt = optimizers.LossScalingOptimizer(opt, params.loss_scale)
 
         # Optimization
-        if args.adapt_mode != "frozen":
+        if params.adapt_mode != "frozen":
             grads_and_vars = opt.compute_gradients(
                 loss, colocate_gradients_with_ops=True)
 
@@ -574,10 +572,11 @@ def main(args):
                 checkpoint_dir=checkpoint_dir, hooks=train_hooks,
                 save_checkpoint_secs=None,
                 config=session_config(params)) as sess:
-            # Restore pre-trained variables
-            sess.run_step_fn(restore_fn)
             sess.run(load_encoder_op)
             sess.run(load_decoder_op)
+
+            # Restore pre-trained variables
+            sess.run_step_fn(restore_fn)
 
             while not sess.should_stop():
                 sess.run(train_op)

@@ -324,12 +324,15 @@ def model_graph(features, mode, params):
 
     # add adapter matrix (or whatever)
     with tf.variable_scope("adapter", default_name="adapter"):
+        print(params.adapt_mode)
         if params.adapt_mode == "frozen":
             adapter = tf.eye(params.hidden_size, name="weight")
-        else:
+        elif params.adapt_mode == "small-random":
             initializer = tf.random_normal_initializer(0.0, params.hidden_size ** -0.5)
             adapter = tf.get_variable("weight", [params.hidden_size, params.hidden_size],
                                       initializer=initializer)
+        else:
+            raise LookupError("Unknown adaption mode %s" % params.adapt_mode)
         encoder_output = tf.tensordot(encoder_output, adapter, [[2], [0]])
 
     state = {
