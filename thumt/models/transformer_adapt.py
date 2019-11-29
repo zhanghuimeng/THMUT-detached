@@ -48,6 +48,15 @@ def _ffn_layer(inputs, hidden_size, output_size, keep_prob=None,
         return output
 
 
+def _weight_image_summary(weight, name):
+    # weight: [h, w] tensor
+    # image: [k, h, w, c] tensor
+    image = tf.expand_dims(weight, 0)
+    image = tf.expand_dims(image, -1)
+    # [batch, height, width, channel]
+    tf.summary.image(name, image, max_outputs=1)
+
+
 def transformer_encoder(inputs, bias, params, dtype=None, scope=None):
     with tf.variable_scope(scope, default_name="encoder", dtype=dtype,
                            values=[inputs, bias]):
@@ -327,13 +336,29 @@ def model_graph(features, mode, params):
         print(params.adapt_mode)
         if params.adapt_mode == "frozen":
             adapter = tf.eye(params.hidden_size, name="weight")
+            encoder_output = tf.tensordot(encoder_output, adapter, [[2], [0]])
         elif params.adapt_mode == "small-random":
             initializer = tf.random_normal_initializer(0.0, params.hidden_size ** -0.5)
             adapter = tf.get_variable("weight", [params.hidden_size, params.hidden_size],
                                       initializer=initializer)
+            _weight_image_summary(adapter, "weight")
+            tf.summary.histogram(name="weight", values=adapter)
+            # add layer_norm
+            encoder_output = _layer_process(encoder_output, params.layer_preprocess)
+            encoder_output = tf.tensordot(encoder_output, adapter, [[2], [0]])
+        elif params.adapt_mode == "ffn":
+            # do layer_norm and ffn
+            encoder_output = _ffn_layer(
+                inputs=_layer_process(encoder_output, params.layer_preprocess),
+                hidden_size=params.filter_size,
+                output_size=params.hidden_size,
+                keep_prob=1.0 - params.relu_dropout,
+            )
+            # encoder_output = _ffn_layer(inputs=encoder_output,
+            #                             hidden_size=params.hidden_size,
+            #                             output_size=params.hidden_size)
         else:
             raise LookupError("Unknown adaption mode %s" % params.adapt_mode)
-        encoder_output = tf.tensordot(encoder_output, adapter, [[2], [0]])
 
     state = {
         "encoder": encoder_output

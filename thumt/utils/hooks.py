@@ -36,6 +36,13 @@ def _save_log(filename, result):
         fd.write(msg)
 
 
+def _save_validation_output(filename, decoded_symbols):
+    # print validation output to file
+    with open(filename, "w") as f:
+        for symbols in decoded_symbols:
+            f.write(" ".join(symbols) + "\n")
+
+
 def _read_checkpoint_def(filename):
     records = []
 
@@ -184,7 +191,8 @@ def _evaluate(eval_fn, input_fn, decode_fn, path, config, placeholder):
         decoded_refs = [decode_fn(refs) for refs in all_refs]
         decoded_refs = [list(x) for x in zip(*decoded_refs)]
 
-        return bleu.bleu(decoded_symbols, decoded_refs)
+        # return decoded_symbols to debug
+        return decoded_symbols, bleu.bleu(decoded_symbols, decoded_refs)
 
 
 class EvaluationHook(tf.train.SessionRunHook):
@@ -215,6 +223,7 @@ class EvaluationHook(tf.train.SessionRunHook):
             raise ValueError("Currently, EvaluationHook only support BLEU")
 
         self._base_dir = base_dir.rstrip("/")
+        self._debug_dir = os.path.join(base_dir, "debug")  # debug
         self._session_config = session_config
         self._save_path = os.path.join(base_dir, "eval")
         self._record_name = os.path.join(self._save_path, "record")
@@ -239,6 +248,11 @@ class EvaluationHook(tf.train.SessionRunHook):
         if not tf.gfile.Exists(self._save_path):
             tf.logging.info("Making dir: %s" % self._save_path)
             tf.gfile.MakeDirs(self._save_path)
+
+        # debug dir
+        if not tf.gfile.Exists(self._debug_dir):
+            tf.logging.info("Making dir: %s" % self._debug_dir)
+            tf.gfile.MakeDirs(self._debug_dir)
 
         params_pattern = os.path.join(self._base_dir, "*.json")
         params_files = tf.gfile.Glob(params_pattern)
@@ -274,16 +288,19 @@ class EvaluationHook(tf.train.SessionRunHook):
                            save_path,
                            global_step=global_step)
                 # Do validation here
+                # Debug: print validation result
                 tf.logging.info("Validating model at step %d" % global_step)
-                score = _evaluate(self._eval_fn, self._eval_input_fn,
+                decoded_symbols, score = _evaluate(self._eval_fn, self._eval_input_fn,
                                   self._eval_decode_fn,
                                   self._base_dir,
                                   self._session_config,
                                   self._placeholder)
+
                 tf.logging.info("%s at step %d: %f" %
                                 (self._metric, global_step, score))
 
                 _save_log(self._log_name, (self._metric, global_step, score))
+                _save_validation_output(os.path.join(self._debug_dir, "%d.out" % global_step), decoded_symbols)
 
                 checkpoint_filename = os.path.join(self._base_dir,
                                                    "checkpoint")
