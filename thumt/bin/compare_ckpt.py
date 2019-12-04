@@ -13,7 +13,6 @@ import six
 import sys
 
 import numpy as np
-import pandas as pd
 import tensorflow as tf
 import thumt.data.dataset as dataset
 import thumt.data.vocab as vocabulary
@@ -48,115 +47,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def default_parameters():
-    params = tf.contrib.training.HParams(
-        device_list=[0],
-        num_threads=1,
-    )
-
-    return params
-
-
-def merge_parameters(params1, params2):
-    params = tf.contrib.training.HParams()
-
-    for (k, v) in six.iteritems(params1.values()):
-        params.add_hparam(k, v)
-
-    params_dict = params.values()
-
-    for (k, v) in six.iteritems(params2.values()):
-        if k in params_dict:
-            # Override
-            setattr(params, k, v)
-        else:
-            params.add_hparam(k, v)
-
-    return params
-
-
-def import_params(model_dir, model_name, params):
-    if model_name.startswith("experimental_"):
-        model_name = model_name[13:]
-
-    model_dir = os.path.abspath(model_dir)
-    m_name = os.path.join(model_dir, model_name + ".json")
-
-    if not tf.gfile.Exists(m_name):
-        return params
-
-    with tf.gfile.Open(m_name) as fd:
-        tf.logging.info("Restoring model parameters from %s" % m_name)
-        json_str = fd.readline()
-        params.parse_json(json_str)
-
-    return params
-
-
-def override_parameters(params, args):
-    if args.parameters:
-        params.parse(args.parameters)
-
-    return params
-
-
-def session_config(params):
-    optimizer_options = tf.OptimizerOptions(opt_level=tf.OptimizerOptions.L1,
-                                            do_function_inlining=False)
-    graph_options = tf.GraphOptions(optimizer_options=optimizer_options)
-    config = tf.ConfigProto(allow_soft_placement=True,
-                            graph_options=graph_options)
-    if params.device_list:
-        device_str = ",".join([str(i) for i in params.device_list])
-        config.gpu_options.visible_device_list = device_str
-
-    return config
-
-
-def set_variables(var_list, value_dict, prefix, feed_dict):
-    ops = []
-    for var in var_list:
-        for name in value_dict:
-            var_name = "/".join([prefix] + list(name.split("/")[1:]))
-
-            if var.name[:-2] == var_name:
-                tf.logging.debug("restoring %s -> %s" % (name, var.name))
-                placeholder = tf.placeholder(tf.float32,
-                                             name="placeholder/" + var_name)
-                with tf.device("/cpu:0"):
-                    op = tf.assign(var, placeholder)
-                    ops.append(op)
-                feed_dict[placeholder] = value_dict[name]
-                break
-
-    return ops
-
-
-def shard_features(features, placeholders, predictions):
-    num_shards = len(placeholders)
-    feed_dict = {}
-    n = 0
-
-    for name in features:
-        feat = features[name]
-        batch = feat.shape[0]
-        shard_size = (batch + num_shards - 1) // num_shards
-
-        for i in range(num_shards):
-            shard_feat = feat[i * shard_size:(i + 1) * shard_size]
-
-            if shard_feat.shape[0] != 0:
-                feed_dict[placeholders[i][name]] = shard_feat
-                n = i + 1
-            else:
-                break
-
-    if isinstance(predictions, (list, tuple)):
-        predictions = predictions[:n]
-
-    return predictions, feed_dict
-
-
 def frobenius_distance(A, B):
     C = A - B
     if len(C.shape) == 1:
@@ -166,23 +56,22 @@ def frobenius_distance(A, B):
     return np.sqrt(np.trace(C))
 
 
+def euclidean_distance(A, B):
+    C = A - B
+    C = C * C
+    return np.sqrt(np.sum(C))
+
+
+def d1_norm(A, B):
+    C = A - B
+    C = np.abs(C)
+    return np.sum(C)
+
+
 def main(args):
     tf.logging.set_verbosity(tf.logging.INFO)
     # Load configs
     model_cls_list = [models.get_model(args.model) for _ in range(len(args.checkpoints))]
-    params_list = [default_parameters() for _ in range(len(model_cls_list))]
-    params_list = [
-        merge_parameters(params, model_cls.get_parameters())
-        for params, model_cls in zip(params_list, model_cls_list)
-    ]
-    params_list = [
-        import_params(args.checkpoints[i], args.model, params_list[i])
-        for i in range(len(args.checkpoints))
-    ]
-    params_list = [
-        override_parameters(params_list[i], args)
-        for i in range(len(model_cls_list))
-    ]
 
     # Build Graph
     model_var_lists = []
@@ -207,17 +96,28 @@ def main(args):
 
         model_var_lists.append(values)
 
-    distance = [dict()] * len(model_var_lists)
+    dist = dict()
     # calculate distance
     for i in range(1, len(model_var_lists)):
         print("Comparing ckpt %s and %s" % (args.checkpoints[0], args.checkpoints[i]))
         for name in model_var_lists[i]:
-            if "Adam" in name or "MultiStepOptimizer" in name:
+            if "Adam" in name or "MultiStepOptimizer" in name or "encoder" in name:
                 continue
-            distance[i][name] = dict()
             for metric in args.metrics:
+                if model_var_lists[0][name].shape != model_var_lists[i][name].shape:
+                    continue
                 if metric == "frobenius":
-                    distance[i][name][metric] = frobenius_distance(
+                    dist[(metric, i, name)] = frobenius_distance(
+                        model_var_lists[0][name],
+                        model_var_lists[i][name],
+                    )
+                elif metric == "euclidean":
+                    dist[(metric, i, name)] = euclidean_distance(
+                        model_var_lists[0][name],
+                        model_var_lists[i][name],
+                    )
+                elif metric == "d1_norm":
+                    dist[(metric, i, name)] = d1_norm(
                         model_var_lists[0][name],
                         model_var_lists[i][name],
                     )
@@ -232,13 +132,23 @@ def main(args):
     else:
         raise ValueError("Unknown python running environment!")
 
+    outfile.write(",")
     for i in range(1, len(model_var_lists)):
-        outfile.write("Checkpoint %s VS %s\n" % (args.checkpoints[0], args.checkpoints[i]))
-        for name in model_var_lists[i]:
-            outfile.write("%s " % name)
+        outfile.write("%s," % args.checkpoints[i])
+    outfile.write("\n")
+    for name in model_var_lists[0]:
+        if "Adam" in name or "MultiStepOptimizer" in name or "encoder" in name:
+            continue
+        if "source_embedding" in name or "transformer/bias" in name:
+            continue
+        outfile.write("%s," % name)
+        for i in range(1, len(model_var_lists)):
             for metric in args.metrics:
-                outfile.write("%f " % distance[i][name][metric])
-            outfile.write("\n")
+                if (metric, i, name) in dist:
+                    outfile.write("%f," % dist[(metric, i, name)])
+                else:
+                    outfile.write("-1,")
+        outfile.write("\n")
 
     outfile.close()
 
