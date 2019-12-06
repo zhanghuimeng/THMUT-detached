@@ -257,7 +257,7 @@ def main(args):
 
         params = params_list[0]
         # Read input file
-        sorted_keys, sorted_inputs = dataset.sort_input_file(args.input)
+        sorted_keys, sorted_inputs, _ = dataset.sort_input_file(args.input)
         # Build input queue
         features = dataset.get_inference_input(sorted_inputs, params)
         # Create placeholders

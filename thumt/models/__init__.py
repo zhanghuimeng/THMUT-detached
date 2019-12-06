@@ -27,7 +27,7 @@ def get_model(name, lrp=False, frozen=False, adapt=False):
     elif name == "transformer":
         if not lrp and not frozen and not adapt:
             return thumt.models.transformer.Transformer
-        elif frozen:
+        elif frozen and not adapt:
             return thumt.models.transformer_frozen.Transformer
         elif adapt:
             return thumt.models.transformer_adapt.Transformer

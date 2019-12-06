@@ -50,6 +50,8 @@ def parse_args(args=None):
                         help="Path to encoder checkpoint")
     parser.add_argument("--dec_ckpt", type=str,  # dec
                         help="Path to decoder checkpoint")
+    parser.add_argument("--no_frozen", action="store_true",
+                        help="Stop freezing the enc and dec") # no for compatibility
     parser.add_argument("--half", action="store_true",
                         help="Enable FP16 training")
     parser.add_argument("--distribute", action="store_true",
@@ -99,7 +101,8 @@ def default_parameters():
         learning_rate_values=[0.0],
         keep_checkpoint_max=20,
         keep_top_checkpoint_max=5,
-        adapt_mode="frozen",
+        adapt_mode="frozen",  # adapt
+        adpat_layer_n=3,  # adapt
         # Validation
         eval_steps=2000,
         eval_secs=0,
@@ -399,7 +402,7 @@ def main(args):
 
     tf.logging.set_verbosity(tf.logging.INFO)
     # 勤写positional参数的名字真是一个好习惯
-    model_cls = models.get_model(args.model, adapt=True)
+    model_cls = models.get_model(args.model, adapt=True, frozen=not args.no_frozen)
     params = default_parameters()
 
     # Import and override parameters
@@ -439,7 +442,7 @@ def main(args):
 
         # Multi-GPU setting
         sharded_losses = parallel.parallel_model(
-            model.get_training_func(initializer, regularizer, dtype),
+            model.get_training_func(initializer, regularizer, dtype, frozen=not args.no_frozen),
             features,
             params.device_list
         )

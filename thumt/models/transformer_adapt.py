@@ -48,6 +48,28 @@ def _ffn_layer(inputs, hidden_size, output_size, keep_prob=None,
         return output
 
 
+def _deep_ffn_layer(inputs, hidden_size, output_size, n_layer, keep_prob=None,
+               dtype=None, scope=None, frozen=False):
+    # multiple layers of ffn
+    with tf.variable_scope(scope, default_name="deep_ffn_layer", values=[inputs],
+                           dtype=dtype):
+        with tf.variable_scope("input_layer"):
+            hidden = layers.nn.linear(inputs, hidden_size, True, True, frozen=frozen)
+            hidden = tf.nn.relu(hidden)
+
+        for i in range(n_layer - 2):
+            if keep_prob and keep_prob < 1.0:
+                hidden = tf.nn.dropout(hidden, keep_prob)
+            with tf.variable_scope("inner_layer_%d" % i):
+                hidden = layers.nn.linear(hidden, hidden_size, True, True, frozen=frozen)
+                hidden = tf.nn.relu(hidden)
+
+        with tf.variable_scope("output_layer"):
+            output = layers.nn.linear(hidden, output_size, True, True, frozen=frozen)
+
+        return output
+
+
 def _weight_image_summary(weight, name):
     # weight: [h, w] tensor
     # image: [k, h, w, c] tensor
@@ -57,7 +79,7 @@ def _weight_image_summary(weight, name):
     tf.summary.image(name, image, max_outputs=1)
 
 
-def transformer_encoder(inputs, bias, params, dtype=None, scope=None):
+def transformer_encoder(inputs, bias, params, dtype=None, scope=None, frozen=True):
     with tf.variable_scope(scope, default_name="encoder", dtype=dtype,
                            values=[inputs, bias]):
         x = inputs
@@ -77,11 +99,11 @@ def transformer_encoder(inputs, bias, params, dtype=None, scope=None):
                         params.hidden_size,
                         1.0 - params.attention_dropout,
                         max_relative_dis=max_relative_dis,
-                        frozen=True,
+                        frozen=frozen,
                     )
                     y = y["outputs"]
                     x = _residual_fn(x, y, 1.0 - params.residual_dropout)
-                    x = _layer_process(x, params.layer_postprocess, frozen=True)
+                    x = _layer_process(x, params.layer_postprocess, frozen=frozen)
 
                 with tf.variable_scope("feed_forward"):
                     y = _ffn_layer(
@@ -89,18 +111,18 @@ def transformer_encoder(inputs, bias, params, dtype=None, scope=None):
                         params.filter_size,
                         params.hidden_size,
                         1.0 - params.relu_dropout,
-                        frozen=True,
+                        frozen=frozen,
                     )
                     x = _residual_fn(x, y, 1.0 - params.residual_dropout)
-                    x = _layer_process(x, params.layer_postprocess, frozen=True)
+                    x = _layer_process(x, params.layer_postprocess, frozen=frozen)
 
-        outputs = _layer_process(x, params.layer_preprocess, frozen=True)
+        outputs = _layer_process(x, params.layer_preprocess, frozen=frozen)
 
         return outputs
 
 
 def transformer_decoder(inputs, memory, bias, mem_bias, params, state=None,
-                        dtype=None, scope=None):
+                        dtype=None, scope=None, frozen=True):
     with tf.variable_scope(scope, default_name="decoder", dtype=dtype,
                            values=[inputs, memory, bias, mem_bias]):
         x = inputs
@@ -124,7 +146,7 @@ def transformer_decoder(inputs, memory, bias, mem_bias, params, state=None,
                         1.0 - params.attention_dropout,
                         state=layer_state,
                         max_relative_dis=max_relative_dis,
-                        frozen=True,
+                        frozen=frozen,
                     )
 
                     if layer_state is not None:
@@ -132,7 +154,7 @@ def transformer_decoder(inputs, memory, bias, mem_bias, params, state=None,
 
                     y = y["outputs"]
                     x = _residual_fn(x, y, 1.0 - params.residual_dropout)
-                    x = _layer_process(x, params.layer_postprocess, frozen=True)
+                    x = _layer_process(x, params.layer_postprocess, frozen=frozen)
 
                 with tf.variable_scope("encdec_attention"):
                     y = layers.attention.multihead_attention(
@@ -145,11 +167,11 @@ def transformer_decoder(inputs, memory, bias, mem_bias, params, state=None,
                         params.hidden_size,
                         1.0 - params.attention_dropout,
                         max_relative_dis=max_relative_dis,
-                        frozen=True,
+                        frozen=frozen,
                     )
                     y = y["outputs"]
                     x = _residual_fn(x, y, 1.0 - params.residual_dropout)
-                    x = _layer_process(x, params.layer_postprocess, frozen=True)
+                    x = _layer_process(x, params.layer_postprocess, frozen=frozen)
 
                 with tf.variable_scope("feed_forward"):
                     y = _ffn_layer(
@@ -157,12 +179,12 @@ def transformer_decoder(inputs, memory, bias, mem_bias, params, state=None,
                         params.filter_size,
                         params.hidden_size,
                         1.0 - params.relu_dropout,
-                        frozen=True,
+                        frozen=frozen,
                     )
                     x = _residual_fn(x, y, 1.0 - params.residual_dropout)
-                    x = _layer_process(x, params.layer_postprocess, frozen=True)
+                    x = _layer_process(x, params.layer_postprocess, frozen=frozen)
 
-        outputs = _layer_process(x, params.layer_preprocess, frozen=True)
+        outputs = _layer_process(x, params.layer_preprocess, frozen=frozen)
 
         if state is not None:
             return outputs, next_state
@@ -170,7 +192,7 @@ def transformer_decoder(inputs, memory, bias, mem_bias, params, state=None,
         return outputs
 
 
-def encoding_graph(features, mode, params):
+def encoding_graph(features, mode, params, frozen=True):
     if mode != "train":
         params.residual_dropout = 0.0
         params.attention_dropout = 0.0
@@ -193,14 +215,14 @@ def encoding_graph(features, mode, params):
         src_embedding = tf.get_variable("weights",
                                         [src_vocab_size, hidden_size],
                                         initializer=initializer,
-                                        trainable=False)
+                                        trainable=not frozen)
     else:
         src_embedding = tf.get_variable("source_embedding",
                                         [src_vocab_size, hidden_size],
                                         initializer=initializer,
-                                        trainable=False)
+                                        trainable=not frozen)
 
-    bias = tf.get_variable("bias", [hidden_size], trainable=False)
+    bias = tf.get_variable("bias", [hidden_size], trainable=not frozen)
 
     inputs = tf.gather(src_embedding, src_seq)
 
@@ -219,12 +241,12 @@ def encoding_graph(features, mode, params):
         keep_prob = 1.0 - params.residual_dropout
         encoder_input = tf.nn.dropout(encoder_input, keep_prob)
 
-    encoder_output = transformer_encoder(encoder_input, enc_attn_bias, params)
+    encoder_output = transformer_encoder(encoder_input, enc_attn_bias, params, frozen=frozen)
 
     return encoder_output
 
 
-def decoding_graph(features, state, mode, params):
+def decoding_graph(features, state, mode, params, frozen=True):
     if mode != "train":
         params.residual_dropout = 0.0
         params.attention_dropout = 0.0
@@ -252,18 +274,18 @@ def decoding_graph(features, state, mode, params):
             tgt_embedding = tf.get_variable("weights",
                                             [tgt_vocab_size, hidden_size],
                                             initializer=initializer,
-                                            trainable=False)
+                                            trainable=not frozen)
     else:
         tgt_embedding = tf.get_variable("target_embedding",
                                         [tgt_vocab_size, hidden_size],
                                         initializer=initializer,
-                                        trainable=False)
+                                        trainable=not frozen)
 
     if params.shared_embedding_and_softmax_weights:
         weights = tgt_embedding
     else:
         weights = tf.get_variable("softmax", [tgt_vocab_size, hidden_size],
-                                  initializer=initializer, trainable=False)
+                                  initializer=initializer, trainable=not frozen)
 
     targets = tf.gather(tgt_embedding, tgt_seq)
 
@@ -290,13 +312,14 @@ def decoding_graph(features, state, mode, params):
     if mode != "infer":
         decoder_output = transformer_decoder(decoder_input, encoder_output,
                                              dec_attn_bias, enc_attn_bias,
-                                             params)
+                                             params, frozen=frozen)
     else:
         decoder_input = decoder_input[:, -1:, :]
         dec_attn_bias = dec_attn_bias[:, :, -1:, :]
         decoder_outputs = transformer_decoder(decoder_input, encoder_output,
                                               dec_attn_bias, enc_attn_bias,
-                                              params, state=state["decoder"])
+                                              params, state=state["decoder"],
+                                              frozen=frozen)
 
         decoder_output, decoder_state = decoder_outputs
         decoder_output = decoder_output[:, -1, :]
@@ -328,8 +351,8 @@ def decoding_graph(features, state, mode, params):
     return loss
 
 
-def model_graph(features, mode, params):
-    encoder_output = encoding_graph(features, mode, params)
+def model_graph(features, mode, params, frozen=True):
+    encoder_output = encoding_graph(features, mode, params, frozen=frozen)
 
     # add adapter matrix (or whatever)
     with tf.variable_scope("adapter", default_name="adapter"):
@@ -357,13 +380,21 @@ def model_graph(features, mode, params):
             # encoder_output = _ffn_layer(inputs=encoder_output,
             #                             hidden_size=params.hidden_size,
             #                             output_size=params.hidden_size)
+        elif params.adapt_mode == "deep-ffn":
+            encoder_output = _deep_ffn_layer(
+                inputs=_layer_process(encoder_output, params.layer_preprocess),
+                hidden_size=params.filter_size,
+                output_size=params.hidden_size,
+                keep_prob=1.0 - params.relu_dropout,
+                n_layer=params.adpat_layer_n,
+            )
         else:
             raise LookupError("Unknown adaption mode %s" % params.adapt_mode)
 
     state = {
         "encoder": encoder_output
     }
-    output = decoding_graph(features, state, mode, params)
+    output = decoding_graph(features, state, mode, params, frozen=frozen)
 
     return output
 
@@ -373,7 +404,7 @@ class Transformer(NMTModel):
     def __init__(self, params, scope="transformer"):
         super(Transformer, self).__init__(params=params, scope=scope)
 
-    def get_training_func(self, initializer, regularizer=None, dtype=None):
+    def get_training_func(self, initializer, regularizer=None, dtype=None, frozen=True):
         def training_fn(features, params=None, reuse=None):
             if params is None:
                 params = copy.copy(self.parameters)
@@ -385,7 +416,7 @@ class Transformer(NMTModel):
             with tf.variable_scope(self._scope, initializer=initializer,
                                    regularizer=regularizer, reuse=reuse,
                                    custom_getter=custom_getter, dtype=dtype):
-                loss = model_graph(features, "train", params)
+                loss = model_graph(features, "train", params, frozen=frozen)
                 return loss
 
         return training_fn
