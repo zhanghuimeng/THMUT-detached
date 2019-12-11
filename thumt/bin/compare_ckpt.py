@@ -101,7 +101,7 @@ def main(args):
     for i in range(1, len(model_var_lists)):
         print("Comparing ckpt %s and %s" % (args.checkpoints[0], args.checkpoints[i]))
         for name in model_var_lists[i]:
-            if "Adam" in name or "MultiStepOptimizer" in name or "encoder" in name:
+            if "Adam" in name or "MultiStepOptimizer" in name:
                 continue
             for metric in args.metrics:
                 if model_var_lists[0][name].shape != model_var_lists[i][name].shape:
@@ -137,7 +137,7 @@ def main(args):
         outfile.write("%s," % args.checkpoints[i])
     outfile.write("\n")
     for name in model_var_lists[0]:
-        if "Adam" in name or "MultiStepOptimizer" in name or "encoder" in name:
+        if "Adam" in name or "MultiStepOptimizer" in name:
             continue
         if "source_embedding" in name or "transformer/bias" in name:
             continue

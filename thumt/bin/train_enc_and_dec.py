@@ -328,6 +328,9 @@ def restore_variables(checkpoint):
 def restore_encoder_variables(checkpoint):
     # Copied from restore_variables
     # Load encoder weights in checkpoint
+    if not checkpoint:
+        return tf.no_op("restore_encoder_op")
+
     tf.logging.info("Loading %s for encoder" % checkpoint)
     var_list = tf.train.list_variables(checkpoint)
     reader = tf.train.load_checkpoint(checkpoint)
@@ -357,6 +360,9 @@ def restore_encoder_variables(checkpoint):
 def restore_decoder_variables(checkpoint):
     # Copied from restore_variables
     # Load decoder weights in checkpoint
+    if not checkpoint:
+        return tf.no_op("restore_decoder_op")
+
     tf.logging.info("Loading %s for decoder" % checkpoint)
     var_list = tf.train.list_variables(checkpoint)
     reader = tf.train.load_checkpoint(checkpoint)
@@ -541,6 +547,7 @@ def main(args):
                 step=params.update_cycle)
             )
 
+            # 震惊地发现，evaluation用的是get_inference_func，不是get_evaluation_func……
             if eval_input_fn is not None:
                 train_hooks.append(
                     hooks.MultiStepHook(

@@ -62,7 +62,6 @@ def _deep_ffn_layer(inputs, hidden_size, output_size, n_layer, keep_prob=None,
                 hidden = tf.nn.dropout(hidden, keep_prob)
             with tf.variable_scope("inner_layer_%d" % i):
                 hidden = layers.nn.linear(hidden, hidden_size, True, True, frozen=frozen)
-                hidden = tf.nn.relu(hidden)
 
         with tf.variable_scope("output_layer"):
             output = layers.nn.linear(hidden, output_size, True, True, frozen=frozen)
@@ -351,12 +350,11 @@ def decoding_graph(features, state, mode, params, frozen=True):
     return loss
 
 
-def model_graph(features, mode, params, frozen=True):
-    encoder_output = encoding_graph(features, mode, params, frozen=frozen)
-
+def adapter(params, encoder_output):
+    # encoder_output: [batch, len, hidden]
+    # matrix: [hidden, hidden]
     # add adapter matrix (or whatever)
     with tf.variable_scope("adapter", default_name="adapter"):
-        print(params.adapt_mode)
         if params.adapt_mode == "frozen":
             adapter = tf.eye(params.hidden_size, name="weight")
             encoder_output = tf.tensordot(encoder_output, adapter, [[2], [0]])
@@ -390,6 +388,14 @@ def model_graph(features, mode, params, frozen=True):
             )
         else:
             raise LookupError("Unknown adaption mode %s" % params.adapt_mode)
+
+    return encoder_output
+
+
+def model_graph(features, mode, params, frozen=True):
+    encoder_output = encoding_graph(features, mode, params, frozen=frozen)
+
+    encoder_output = adapter(params, encoder_output)
 
     state = {
         "encoder": encoder_output
@@ -444,6 +450,8 @@ class Transformer(NMTModel):
 
             with tf.variable_scope(self._scope):
                 encoder_output = encoding_graph(features, "infer", params)
+                # inference should need adapter too
+                encoder_output = adapter(params, encoder_output)
                 batch = tf.shape(encoder_output)[0]
 
                 state = {
