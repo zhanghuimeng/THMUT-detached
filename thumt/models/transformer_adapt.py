@@ -350,7 +350,7 @@ def decoding_graph(features, state, mode, params, frozen=True):
     return loss
 
 
-def adapter(params, encoder_output):
+def _adapter(params, encoder_output):
     # encoder_output: [batch, len, hidden]
     # matrix: [hidden, hidden]
     # add adapter matrix (or whatever)
@@ -386,6 +386,24 @@ def adapter(params, encoder_output):
                 keep_prob=1.0 - params.relu_dropout,
                 n_layer=params.adpat_layer_n,
             )
+        elif params.adapt_mode == "attention":
+            pass  # 不会写。。
+        elif params.adapt_mode == "bi-lstm":
+            cell_fw = tf.nn.rnn_cell.LSTMCell(num_units=params.hidden_size)
+            cell_bw = tf.nn.rnn_cell.LSTMCell(num_units=params.hidden_size)
+            outputs, _ = tf.nn.bidirectional_dynamic_rnn(
+                cell_fw=cell_fw,
+                cell_bw=cell_bw,
+                inputs=encoder_output,
+                dtype=tf.float32,
+            )
+            encoder_output = tf.concat(outputs, 2)
+            encoder_output = _ffn_layer(
+                inputs=_layer_process(encoder_output, params.layer_preprocess),
+                hidden_size=params.filter_size,
+                output_size=params.hidden_size,
+                keep_prob=1.0 - params.relu_dropout,
+            )
         else:
             raise LookupError("Unknown adaption mode %s" % params.adapt_mode)
 
@@ -395,7 +413,7 @@ def adapter(params, encoder_output):
 def model_graph(features, mode, params, frozen=True):
     encoder_output = encoding_graph(features, mode, params, frozen=frozen)
 
-    encoder_output = adapter(params, encoder_output)
+    encoder_output = _adapter(params, encoder_output)
 
     state = {
         "encoder": encoder_output
@@ -451,7 +469,7 @@ class Transformer(NMTModel):
             with tf.variable_scope(self._scope):
                 encoder_output = encoding_graph(features, "infer", params)
                 # inference should need adapter too
-                encoder_output = adapter(params, encoder_output)
+                encoder_output = _adapter(params, encoder_output)
                 batch = tf.shape(encoder_output)[0]
 
                 state = {
