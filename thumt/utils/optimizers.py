@@ -220,6 +220,8 @@ class MultiStepOptimizer(tf.train.Optimizer):
             if isinstance(grad, tf.IndexedSlices):
                 grad_acc = tf.scatter_add(grad_acc, grad.indices, grad.values,
                                           use_locking=self._use_locking)
+            elif grad is None:  # patch for bert (none-grad)
+                grad_acc = tf.zeros_like(var)
             else:
                 grad_acc = tf.assign_add(grad_acc, grad,
                                          use_locking=self._use_locking)

@@ -12,6 +12,7 @@ import thumt.models.transformer
 import thumt.models.transformer_lrp
 import thumt.models.transformer_frozen
 import thumt.models.transformer_adapt
+import thumt.models.transformer_bert_encoder
 
 
 def get_model(name, lrp=False, frozen=False, adapt=False):
@@ -33,5 +34,7 @@ def get_model(name, lrp=False, frozen=False, adapt=False):
             return thumt.models.transformer_adapt.Transformer
         else:
             return thumt.models.transformer_lrp.TransformerLRP
+    elif name == "bert-transformer":
+        return thumt.models.transformer_bert_encoder.Transformer
     else:
         raise LookupError("Unknown model %s" % name)
