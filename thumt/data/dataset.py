@@ -188,14 +188,14 @@ def get_bert_encoder_training_input(filenames, params):
         tgt_dataset = tf.data.TextLineDataset(filenames[1])
 
         # Generate unique_id and zip
-        def _id_gen():
-            for i in itertools.count(1):
-                yield i
+        # def _id_gen():
+        #     for i in itertools.count(1):
+        #         yield i
+        #
+        # id_dataset = tf.data.Dataset.from_generator(
+        #     _id_gen, tf.int32, tf.TensorShape([]))
 
-        id_dataset = tf.data.Dataset.from_generator(
-            _id_gen, tf.int32, tf.TensorShape([]))
-
-        dataset = tf.data.Dataset.zip((id_dataset, src_dataset, tgt_dataset))
+        dataset = tf.data.Dataset.zip((src_dataset, tgt_dataset))
 
         if distribute.is_distributed_training_mode():
             dataset = dataset.shard(distribute.size(), distribute.rank())
@@ -205,8 +205,7 @@ def get_bert_encoder_training_input(filenames, params):
 
         # Split string
         dataset = dataset.map(
-            lambda id, src, tgt: (
-                id,
+            lambda src, tgt: (
                 tf.string_split([src]).values,
                 tf.string_split([tgt]).values
             ),
@@ -224,8 +223,7 @@ def get_bert_encoder_training_input(filenames, params):
 
         # Prepend [CLS] and append [SEP]
         dataset = dataset.map(
-            lambda id, src, tgt: (
-                id,
+            lambda src, tgt: (
                 tf.concat([[tf.constant("[CLS]")], src, [tf.constant("[SEP]")]], axis=0),
                 tf.concat([[tf.constant("[CLS]")], tgt, [tf.constant("[SEP]")]], axis=0)
             ),
@@ -234,8 +232,7 @@ def get_bert_encoder_training_input(filenames, params):
 
         # Convert to dictionary, add input_mask and input_type_ids
         dataset = dataset.map(
-            lambda id, src, tgt: {
-                "unique_id": id,
+            lambda src, tgt: {
                 "input_ids": src,
                 "target": tgt,
                 "source_length": tf.shape(src),
@@ -583,6 +580,78 @@ def get_evaluation_input_decoder(inputs, params):
     # debug
     print("get_evaluation_input_decoder")
     print("features: ", str(features))
+
+    return features
+
+
+def get_evaluation_input_bert(inputs, params):
+    # Copied from get_evaluation_input
+    # For bert encoder
+    with tf.device("/cpu:0"):
+        # Create datasets
+        datasets = []
+
+        for data in inputs:
+            dataset = tf.data.Dataset.from_tensor_slices(data)
+            # Split string
+            dataset = dataset.map(lambda x: tf.string_split([x]).values,
+                                  num_parallel_calls=params.num_threads)
+            # Append <eos>
+            # dataset = dataset.map(
+            #     lambda x: tf.concat([x, [tf.constant(params.eos)]], axis=0),
+            #     num_parallel_calls=params.num_threads
+            # )
+
+            # Prepend [CLS] and append [SEP]
+            dataset = dataset.map(
+                lambda x: tf.concat([[tf.constant("[CLS]")], x, [tf.constant("[SEP]")]], axis=0),
+                num_parallel_calls=params.num_threads,
+            )
+
+            datasets.append(dataset)
+
+        dataset = tf.data.Dataset.zip(tuple(datasets))
+
+        # Convert tuple to dictionary
+        dataset = dataset.map(
+            lambda *x: {
+                "input_ids": x[0],
+                "source_length": tf.shape(x[0])[0],
+                "input_type_ids": tf.zeros([tf.shape(x[0])[0]], dtype=tf.int32),
+                "input_mask": tf.ones([tf.shape(x[0])[0]], dtype=tf.int32),
+                "references": x[1:]
+            },
+            num_parallel_calls=params.num_threads
+        )
+
+        dataset = dataset.padded_batch(
+            params.eval_batch_size,
+            {
+                "input_ids": [tf.Dimension(None)],
+                "source_length": [],
+                "input_type_ids": [tf.Dimension(None)],
+                "input_mask": [tf.Dimension(None)],
+                "references": (tf.Dimension(None),) * (len(inputs) - 1)
+            },
+            {
+                "input_ids": params.pad,
+                "source_length": 0,
+                "input_type_ids": 0,
+                "input_mask": 0,
+                "references": (params.pad,) * (len(inputs) - 1)
+            }
+        )
+
+        iterator = dataset.make_one_shot_iterator()
+        features = iterator.get_next()
+
+        # Covert source symbols to ids
+        src_table = tf.contrib.lookup.index_table_from_tensor(
+            tf.constant(params.vocabulary["source"]),
+            default_value=params.mapping["source"][params.unk]
+        )
+
+        features["input_ids"] = src_table.lookup(features["input_ids"])
 
     return features
 

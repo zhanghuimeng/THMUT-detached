@@ -138,7 +138,7 @@ def _add_to_record(records, record, max_to_keep):
 
 
 def _evaluate(eval_fn, input_fn, decode_fn, path, config, placeholder):
-    # placeholder指的是这里的placeholder是用句子作为source，还是用中间表示作为source
+    # placeholder指的是这里的placeholder是用句子作为source，还是用中间表示作为source，还是用bert的格式
     graph = tf.Graph()
     with graph.as_default():
         features = input_fn()
@@ -153,8 +153,15 @@ def _evaluate(eval_fn, input_fn, decode_fn, path, config, placeholder):
                 "source": tf.placeholder(tf.float32, [None, None, 512], "source"),
                 "source_length": tf.placeholder(tf.int32, [None], "source_length")
             }
+        elif placeholder == "bert":  # bert!
+            placeholders = {
+                "input_ids": tf.placeholder(tf.int32, [None, None], "input_ids"),
+                "source_length": tf.placeholder(tf.int32, [None], "source_length"),
+                "input_type_ids": tf.placeholder(tf.int32, [None, None], "input_type_ids"),
+                "input_mask": tf.placeholder(tf.int32, [None, None], "input_mask"),
+            }
         else:
-            raise ValueError("placeholder should either be 'sentence' or 'representation'.")
+            raise ValueError("placeholder should either be 'sentence' or 'representation' or 'bert'.")
         predictions = eval_fn(placeholders)
         predictions = predictions[0][:, 0, :]
 
@@ -169,10 +176,18 @@ def _evaluate(eval_fn, input_fn, decode_fn, path, config, placeholder):
         with tf.train.MonitoredSession(session_creator=sess_creator) as sess:
             while not sess.should_stop():
                 feats = sess.run(features)
-                outputs = sess.run(predictions, feed_dict={
-                    placeholders["source"]: feats["source"],
-                    placeholders["source_length"]: feats["source_length"]
-                })
+                if placeholder == "bert":
+                    outputs = sess.run(predictions, feed_dict={
+                        placeholders["input_ids"]: feats["input_ids"],
+                        placeholders["source_length"]: feats["source_length"],
+                        placeholders["input_type_ids"]: feats["input_type_ids"],
+                        placeholders["input_mask"]: feats["input_mask"],
+                    })
+                else:
+                    outputs = sess.run(predictions, feed_dict={
+                        placeholders["source"]: feats["source"],
+                        placeholders["source_length"]: feats["source_length"]
+                    })
                 # shape: [batch, len]
                 outputs = outputs.tolist()
                 # shape: ([batch, len], ..., [batch, len])
@@ -214,6 +229,7 @@ class EvaluationHook(tf.train.SessionRunHook):
         :param eval_steps: An integer, eval every N steps.
         :param checkpoint_basename: `str`, base name for the checkpoint files.
         :param placeholder: what placeholder should the _evaluate function use.
+                "sentence", "representation" or "bert".
         :raises ValueError: One of `save_steps` or `save_secs` should be set.
         :raises ValueError: At most one of saver or scaffold should be set.
         """

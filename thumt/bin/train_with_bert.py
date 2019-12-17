@@ -486,7 +486,8 @@ def main(args):
         if params.validation and params.references[0]:
             files = [params.validation] + list(params.references)
             eval_inputs = dataset.sort_and_zip_files(files)
-            eval_input_fn = dataset.get_evaluation_input
+            # eval_input_fn = dataset.get_evaluation_input
+            eval_input_fn = dataset.get_evaluation_input_bert  # bert!
         else:
             eval_input_fn = None
 
@@ -533,7 +534,8 @@ def main(args):
                 train_hooks.append(
                     hooks.MultiStepHook(
                         hooks.EvaluationHook(
-                            lambda f: inference.create_inference_graph(
+                            # bert!
+                            lambda f: inference.create_inference_graph_bert(
                                 [model], f, params
                             ),
                             lambda: eval_input_fn(eval_inputs, params),
@@ -542,7 +544,8 @@ def main(args):
                             session_config(params),
                             params.keep_top_checkpoint_max,
                             eval_secs=params.eval_secs,
-                            eval_steps=params.eval_steps
+                            eval_steps=params.eval_steps,
+                            placeholder="bert",  # bert!
                         ),
                         step=params.update_cycle
                     )
@@ -567,9 +570,6 @@ def main(args):
 
             # Restore pre-trained variables
             sess.run_step_fn(restore_fn)
-
-            for _ in range(5):
-                print(sess.run(features))
 
             while not sess.should_stop():
                 sess.run(train_op)
