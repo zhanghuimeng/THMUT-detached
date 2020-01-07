@@ -201,7 +201,10 @@ def _evaluate(eval_fn, input_fn, decode_fn, path, config, placeholder):
         decoded_symbols = decode_fn(all_outputs)
 
         for i, l in enumerate(decoded_symbols):
-            decoded_symbols[i] = " ".join(l).replace("@@ ", "").split()
+            if placeholder == "bert":
+                decoded_symbols[i] = " ".join(l).replace(" ##", "").split()
+            else:
+                decoded_symbols[i] = " ".join(l).replace("@@ ", "").split()
 
         decoded_refs = [decode_fn(refs) for refs in all_refs]
         decoded_refs = [list(x) for x in zip(*decoded_refs)]

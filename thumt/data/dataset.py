@@ -222,10 +222,11 @@ def get_bert_encoder_training_input(filenames, params):
         # )
 
         # Prepend [CLS] and append [SEP]
+        # target do not need [CLS], but still [SEP].
         dataset = dataset.map(
             lambda src, tgt: (
                 tf.concat([[tf.constant("[CLS]")], src, [tf.constant("[SEP]")]], axis=0),
-                tf.concat([[tf.constant("[CLS]")], tgt, [tf.constant("[SEP]")]], axis=0)
+                tf.concat([tgt, [tf.constant("[SEP]")]], axis=0)
             ),
             num_parallel_calls=params.num_threads
         )

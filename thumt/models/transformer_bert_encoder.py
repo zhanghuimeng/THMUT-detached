@@ -141,7 +141,9 @@ def encoding_graph(features, mode, params):
         input_ids=input_ids,
         input_mask=input_mask,
         token_type_ids=input_type_ids,
-        use_one_hot_embeddings=params.use_one_hot_embeddings)
+        use_one_hot_embeddings=params.use_one_hot_embeddings,
+        frozen=True,  # this is natural for enc-dec training
+    )
 
     all_layers = model.get_all_encoder_layers()
 
