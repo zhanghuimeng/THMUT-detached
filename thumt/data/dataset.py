@@ -702,6 +702,74 @@ def get_inference_input(inputs, params):
         return features
 
 
+def get_inference_input_bert(inputs, params):
+    # Copied from get_inference_input
+    # Does inference for translation (not validation but test set)
+    if params.generate_samples:
+        batch_size = params.sample_batch_size
+    else:
+        batch_size = params.decode_batch_size
+
+    with tf.device("/cpu:0"):
+        dataset = tf.data.Dataset.from_tensor_slices(
+            tf.constant(inputs)
+        )
+
+        # Split string
+        dataset = dataset.map(lambda x: tf.string_split([x]).values,
+                              num_parallel_calls=params.num_threads)
+
+        # Append <eos>
+        # dataset = dataset.map(
+        #     lambda x: tf.concat([x, [tf.constant(params.eos)]], axis=0),
+        #     num_parallel_calls=params.num_threads
+        # )
+
+        # Prepend [CLS] and append [SEP]
+        dataset = dataset.map(
+            lambda x: tf.concat([[tf.constant("[CLS]")], x, [tf.constant("[SEP]")]], axis=0),
+            num_parallel_calls=params.num_threads,
+        )
+
+        # Convert tuple to dictionary
+        dataset = dataset.map(
+            lambda x: {
+                "input_ids": x[0],
+                "source_length": tf.shape(x)[0],
+                "input_type_ids": tf.zeros([tf.shape(x)[0]], dtype=tf.int32),
+                "input_mask": tf.ones([tf.shape(x)[0]], dtype=tf.int32),
+            },
+            num_parallel_calls=params.num_threads
+        )
+
+        dataset = dataset.padded_batch(
+            batch_size * len(params.device_list),
+            {
+                "input_ids": [tf.Dimension(None)],
+                "source_length": [],
+                "input_type_ids": [tf.Dimension(None)],
+                "input_mask": [tf.Dimension(None)],
+            },
+            {
+                "input_ids": params.pad,
+                "source_length": 0,
+                "input_type_ids": 0,
+                "input_mask": 0,
+            }
+        )
+
+        iterator = dataset.make_one_shot_iterator()
+        features = iterator.get_next()
+
+        src_table = tf.contrib.lookup.index_table_from_tensor(
+            tf.constant(params.vocabulary["source"]),
+            default_value=params.mapping["source"][params.unk]
+        )
+        features["input_ids"] = src_table.lookup(features["input_ids"])
+
+        return features
+
+
 def get_relevance_input(inputs, outputs, params):
     # inputs
     dataset = tf.data.Dataset.from_tensor_slices(
