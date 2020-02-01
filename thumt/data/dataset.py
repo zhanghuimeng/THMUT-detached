@@ -588,6 +588,7 @@ def get_evaluation_input_decoder(inputs, params):
 def get_evaluation_input_bert(inputs, params):
     # Copied from get_evaluation_input
     # For bert encoder
+    # Added a record number
     with tf.device("/cpu:0"):
         # Create datasets
         datasets = []
@@ -625,9 +626,32 @@ def get_evaluation_input_bert(inputs, params):
             num_parallel_calls=params.num_threads
         )
 
+        # Generate unique_id and zip
+        # The purpose is for final sorting and printing
+        def _id_gen():
+            for i in itertools.count(1):
+                yield i
+
+        id_dataset = tf.data.Dataset.from_generator(
+            _id_gen, tf.int32, tf.TensorShape([]))
+
+        dataset = tf.data.Dataset.zip((id_dataset, dataset))
+        dataset = dataset.map(
+            lambda id, x: {
+                "id": id,
+                "input_ids": x["input_ids"],
+                "source_length": x["source_length"],
+                "input_type_ids": x["input_type_ids"],
+                "input_mask": x["input_mask"],
+                "references": x["references"],
+            },
+            num_parallel_calls=params.num_threads
+        )
+
         dataset = dataset.padded_batch(
             params.eval_batch_size,
             {
+                "id": [],
                 "input_ids": [tf.Dimension(None)],
                 "source_length": [],
                 "input_type_ids": [tf.Dimension(None)],
@@ -635,6 +659,7 @@ def get_evaluation_input_bert(inputs, params):
                 "references": (tf.Dimension(None),) * (len(inputs) - 1)
             },
             {
+                "id": -1,
                 "input_ids": params.pad,
                 "source_length": 0,
                 "input_type_ids": 0,

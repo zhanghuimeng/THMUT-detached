@@ -36,11 +36,15 @@ def _save_log(filename, result):
         fd.write(msg)
 
 
-def _save_validation_output(filename, decoded_symbols):
+def _save_validation_output(filename, id_list, decoded_sentences):
     # print validation output to file
+    result_list = zip(id_list, decoded_sentences)
+    result_list = sorted(result_list)
     with open(filename, "w") as f:
-        for symbols in decoded_symbols:
-            f.write(" ".join(symbols) + "\n")
+        for r in result_list:
+            # tf.logging.info("id: %d" % r[0])
+            # tf.logging.info(r[1])
+            f.write("%s\n" % r[1])
 
 
 def _read_checkpoint_def(filename):
@@ -173,9 +177,11 @@ def _evaluate(eval_fn, input_fn, decode_fn, path, config, placeholder):
             config=config
         )
 
+        id_list = []
         with tf.train.MonitoredSession(session_creator=sess_creator) as sess:
             while not sess.should_stop():
                 feats = sess.run(features)
+                id_list.extend(feats["id"])  # batches of ids
                 if placeholder == "bert":
                     outputs = sess.run(predictions, feed_dict={
                         placeholders["input_ids"]: feats["input_ids"],
@@ -199,10 +205,27 @@ def _evaluate(eval_fn, input_fn, decode_fn, path, config, placeholder):
                     all_refs[i].extend(references[i])
 
         decoded_symbols = decode_fn(all_outputs)
+        decoded_sentences = []
 
         for i, l in enumerate(decoded_symbols):
             if placeholder == "bert":
                 decoded_symbols[i] = " ".join(l).replace(" ##", "").split()
+                # 然后应该把尝试复原的内容加在这里即可……
+                # 参见https://huggingface.co/transformers/main_classes/tokenizer.html#transformers.PreTrainedTokenizer.clean_up_tokenization
+                decoded_sentences.append(
+                    " ".join(decoded_symbols[i])
+                        .replace(" .", ".")
+                        .replace(" ?", "?")
+                        .replace(" !", "!")
+                        .replace(" ,", ",")
+                        .replace(" ' ", "'")
+                        .replace(" n't", "n't")
+                        .replace(" 'm", "'m")
+                        .replace(" do not", " don't")
+                        .replace(" 's", "'s")
+                        .replace(" 've", "'ve")
+                        .replace(" 're", "'re")
+                )
             else:
                 decoded_symbols[i] = " ".join(l).replace("@@ ", "").split()
 
@@ -210,7 +233,9 @@ def _evaluate(eval_fn, input_fn, decode_fn, path, config, placeholder):
         decoded_refs = [list(x) for x in zip(*decoded_refs)]
 
         # return decoded_symbols to debug
-        return decoded_symbols, bleu.bleu(decoded_symbols, decoded_refs)
+        # return id for output
+        # here bleu is not a list...
+        return id_list, decoded_symbols, decoded_sentences, bleu.bleu(decoded_symbols, decoded_refs)
 
 
 class EvaluationHook(tf.train.SessionRunHook):
@@ -309,17 +334,22 @@ class EvaluationHook(tf.train.SessionRunHook):
                 # Do validation here
                 # Debug: print validation result
                 tf.logging.info("Validating model at step %d" % global_step)
-                decoded_symbols, score = _evaluate(self._eval_fn, self._eval_input_fn,
+                id_list, decoded_symbols, decoded_sentences, score = _evaluate(self._eval_fn, self._eval_input_fn,
                                   self._eval_decode_fn,
                                   self._base_dir,
                                   self._session_config,
                                   self._placeholder)
 
+                tf.logging.info(id_list)
+                tf.logging.info(decoded_symbols)
                 tf.logging.info("%s at step %d: %f" %
                                 (self._metric, global_step, score))
 
                 _save_log(self._log_name, (self._metric, global_step, score))
-                _save_validation_output(os.path.join(self._debug_dir, "%d.out" % global_step), decoded_symbols)
+                # Save validation result
+                # Need to sort back here ...
+                _save_validation_output(os.path.join(self._debug_dir, "%d.out" % global_step),
+                                        id_list, decoded_sentences)
 
                 checkpoint_filename = os.path.join(self._base_dir,
                                                    "checkpoint")
@@ -365,7 +395,7 @@ class EvaluationHook(tf.train.SessionRunHook):
         if last_step != self._timer.last_triggered_step():
             global_step = last_step
             tf.logging.info("Validating model at step %d" % global_step)
-            score = _evaluate(self._eval_fn, self._eval_input_fn,
+            _, _, _, score = _evaluate(self._eval_fn, self._eval_input_fn,
                               self._eval_decode_fn,
                               self._base_dir,
                               self._session_config,
