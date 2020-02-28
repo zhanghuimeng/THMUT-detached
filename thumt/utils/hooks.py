@@ -225,6 +225,8 @@ def _evaluate(eval_fn, input_fn, decode_fn, path, config, placeholder):
                         .replace(" 's", "'s")
                         .replace(" 've", "'ve")
                         .replace(" 're", "'re")
+                        .replace("( ", "(")
+                        .replace(" )", ")")
                 )
             else:
                 decoded_symbols[i] = " ".join(l).replace("@@ ", "").split()
