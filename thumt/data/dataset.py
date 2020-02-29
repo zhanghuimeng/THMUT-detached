@@ -759,7 +759,7 @@ def get_inference_input_bert(inputs, params):
         # Convert tuple to dictionary
         dataset = dataset.map(
             lambda x: {
-                "input_ids": x[0],
+                "input_ids": x,
                 "source_length": tf.shape(x)[0],
                 "input_type_ids": tf.zeros([tf.shape(x)[0]], dtype=tf.int32),
                 "input_mask": tf.ones([tf.shape(x)[0]], dtype=tf.int32),
