@@ -353,7 +353,7 @@ class Transformer(NMTModel):
 
     @staticmethod
     def get_name():
-        return "transformer"
+        return "bert-transformer"
 
     @staticmethod
     def get_parameters():

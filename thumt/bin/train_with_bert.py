@@ -131,7 +131,7 @@ def default_parameters():
         num_tpu_cores=8,
         use_one_hot_embeddings=False,
         bert_config_file=None,
-        layer_indexes=[-1,-2,-3,-4],
+
     )
 
     return params

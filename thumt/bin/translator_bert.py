@@ -49,6 +49,8 @@ def parse_args():
     parser.add_argument("--bert_config_file", type=str,
                         help="The config json file corresponding to the pre-trained BERT model. "
                              "This specifies the model architecture.")
+    parser.add_argument("--init_bert_checkpoint", type=str,
+                        help="The bert checkpoint to be loaded")
 
     return parser.parse_args()
 
@@ -173,13 +175,22 @@ def session_config(params):
 
 
 def set_variables(var_list, value_dict, prefix, feed_dict):
+    # for name in value_dict:
+    #     tf.logging.info("Having %s" % name)
+
     ops = []
     for var in var_list:
         for name in value_dict:
             var_name = "/".join([prefix] + list(name.split("/")[1:]))
 
+            tf.logging.info("Check: ")
+            tf.logging.info("Var name: %s" % var.name)
+            tf.logging.info("Checkpoint name: %s" % name)
+            tf.logging.info("Modified Checkpoint name: %s" % var_name)
+
             if var.name[:-2] == var_name:
-                tf.logging.debug("restoring %s -> %s" % (name, var.name))
+                tf.logging.info("restoring %s -> %s" % (name, var.name))
+                # tf.logging.info("restoring %s" % name)
                 placeholder = tf.placeholder(tf.float32,
                                              name="placeholder/" + var_name)
                 with tf.device("/cpu:0"):
@@ -189,6 +200,47 @@ def set_variables(var_list, value_dict, prefix, feed_dict):
                 break
 
     return ops
+
+
+def restore_bert_variables(checkpoint):
+    if not checkpoint:
+        return tf.no_op("restore_op")
+
+    # Load checkpoints
+    tf.logging.info("Loading %s" % checkpoint)
+    var_list = tf.train.list_variables(checkpoint)
+    reader = tf.train.load_checkpoint(checkpoint)
+    values = {}
+
+    # The var_list here is from the ckpt.
+    for (name, shape) in var_list:
+        tensor = reader.get_tensor(name)
+        name = name.split(":")[0]
+        values[name] = tensor
+
+    # The var_list here is from the model itself.
+    var_list = tf.global_variables()
+    ops = []
+
+    for var in var_list:
+        # tf.logging.info("Name:" + var.name)
+        name = var.name.split(":")[0]
+        if "bert/" not in name:
+            continue
+
+        # tf.logging.info("Original Name:" + name)
+
+        index = name.index("bert/")
+        stripped_name = name[index:]
+
+        # tf.logging.info("Stripped name: " + stripped_name)
+
+        if stripped_name in values:
+            # tf.logging.info("Restore %s to %s" % (stripped_name, var.name))
+            tf.logging.info("restoring %s" % stripped_name)
+            ops.append(tf.assign(var, values[stripped_name]))
+
+    return tf.group(*ops, name="restore_bert_op")
 
 
 def shard_features(features, placeholders, predictions):
@@ -220,6 +272,7 @@ def main(args):
     tf.logging.set_verbosity(tf.logging.INFO)
     # Load configs
     model_cls_list = [models.get_model(model) for model in args.models]
+    tf.logging.info(model_cls_list[0].get_name())
     params_list = [default_parameters() for _ in range(len(model_cls_list))]
     params_list = [
         merge_parameters(params, model_cls.get_parameters())
@@ -246,8 +299,8 @@ def main(args):
             reader = tf.train.load_checkpoint(checkpoint)
 
             for (name, shape) in var_list:
-                if not name.startswith(model_cls_list[i].get_name()):
-                    continue
+                # if not (name.startswith(model_cls_list[i].get_name()) or name.startswith("bert")):
+                #     continue
 
                 if name.find("losses_avg") >= 0:
                     continue
@@ -298,7 +351,8 @@ def main(args):
         assign_ops = []
         feed_dict = {}
 
-        all_var_list = tf.trainable_variables()
+        # all_var_list = tf.trainable_variables()
+        all_var_list = tf.global_variables()
 
         for i in range(len(args.checkpoints)):
             un_init_var_list = []
@@ -313,6 +367,9 @@ def main(args):
             assign_ops.extend(ops)
 
         assign_op = tf.group(*assign_ops)
+        # bert!
+        # bert_op = restore_bert_variables(args.init_bert_checkpoint)
+        # assign_op = tf.group([assign_op, bert_op])
         init_op = tf.tables_initializer()
         results = []
 
@@ -373,7 +430,23 @@ def main(args):
                         break
                     decoded.append(vocab[idx])
 
-                decoded = " ".join(decoded)
+                decoded = " ".join(decoded).replace(" ##", "").split()
+                # 然后应该把尝试复原的内容加在这里即可……
+                # 参见https://huggingface.co/transformers/main_classes/tokenizer.html#transformers.PreTrainedTokenizer.clean_up_tokenization
+                decoded = " ".join(decoded)\
+                    .replace(" .", ".")\
+                    .replace(" ?", "?")\
+                    .replace(" !", "!")\
+                    .replace(" ,", ",")\
+                    .replace(" ' ", "'")\
+                    .replace(" n't", "n't")\
+                    .replace(" 'm", "'m")\
+                    .replace(" do not", " don't")\
+                    .replace(" 's", "'s")\
+                    .replace(" 've", "'ve")\
+                    .replace(" 're", "'re")\
+                    .replace("( ", "(")\
+                    .replace(" )", ")")
 
                 if not args.verbose:
                     outfile.write("%s\n" % decoded)
