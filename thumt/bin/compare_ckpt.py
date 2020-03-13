@@ -36,7 +36,7 @@ def parse_args():
 
     # model and configuration
     parser.add_argument("--model", type=str, required=True,
-                        help="Name of the model")  # obviously we need 2 ckpt of the same model
+                        help="Name of the model", default="transformer")  # obviously we need 2 ckpt of the same model
     parser.add_argument("--metrics", type=str, nargs="+", default=["frobenius"],
                         help="The norms to calculate")
     parser.add_argument("--parameters", type=str,
@@ -71,7 +71,7 @@ def d1_norm(A, B):
 def main(args):
     tf.logging.set_verbosity(tf.logging.INFO)
     # Load configs
-    model_cls_list = [models.get_model(args.model) for _ in range(len(args.checkpoints))]
+    # model_cls_list = [models.get_model(args.model) for _ in range(len(args.checkpoints))]
 
     # Build Graph
     model_var_lists = []
@@ -81,18 +81,23 @@ def main(args):
         tf.logging.info("Loading %s" % checkpoint)
         var_list = tf.train.list_variables(checkpoint)
         values = {}
-        reader = tf.train.load_checkpoint(checkpoint)
+        # reader = tf.train.load_checkpoint(checkpoint)
 
         for (name, shape) in var_list:
-            if not name.startswith(model_cls_list[i].get_name()):
-                continue
+            # if not name.startswith(model_cls_list[i].get_name()):
+            #     continue
+            if name.startswith("transformer/"):
+                new_name = name.replace("transformer/", "")
+            else:
+                new_name = name
 
             if name.find("losses_avg") >= 0:
                 continue
 
-            tensor = reader.get_tensor(name)
-            values[name] = tensor
-            tf.logging.info("Loading weight %s: %s" % (name, str(tensor.shape)))
+            # tensor = reader.get_tensor(name)
+            tensor = tf.train.load_variable(checkpoint, name)
+            values[new_name] = tensor
+            tf.logging.info("Loading weight %s: %s" % (new_name, str(tensor.shape)))
 
         model_var_lists.append(values)
 
@@ -104,6 +109,8 @@ def main(args):
             if "Adam" in name or "MultiStepOptimizer" in name:
                 continue
             for metric in args.metrics:
+                if name not in model_var_lists[0]:
+                    continue
                 if model_var_lists[0][name].shape != model_var_lists[i][name].shape:
                     continue
                 if metric == "frobenius":
