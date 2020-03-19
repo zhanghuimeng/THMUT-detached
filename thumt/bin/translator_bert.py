@@ -21,6 +21,7 @@ import thumt.utils.inference as inference
 import thumt.utils.parallel as parallel
 import thumt.utils.sampling as sampling
 import bert.modeling as modeling
+import thumt.utils.bleu as bleu
 
 
 def parse_args():
@@ -34,6 +35,8 @@ def parse_args():
                         help="Path of input file")
     parser.add_argument("--output", type=str, required=True,
                         help="Path of output file")
+    parser.add_argument("--reference", type=str, required=False,
+                        help="Path of reference file")
     parser.add_argument("--checkpoints", type=str, nargs="+", required=True,
                         help="Path of trained models")
     parser.add_argument("--vocabulary", type=str, nargs=2, required=True,
@@ -51,6 +54,9 @@ def parse_args():
                              "This specifies the model architecture.")
     parser.add_argument("--init_bert_checkpoint", type=str,
                         help="The bert checkpoint to be loaded")
+
+    parser.add_argument("--restore", action="store_true",
+                        help="Restore some of spaces between punctuations")
 
     return parser.parse_args()
 
@@ -183,10 +189,10 @@ def set_variables(var_list, value_dict, prefix, feed_dict):
         for name in value_dict:
             var_name = "/".join([prefix] + list(name.split("/")[1:]))
 
-            tf.logging.info("Check: ")
-            tf.logging.info("Var name: %s" % var.name)
-            tf.logging.info("Checkpoint name: %s" % name)
-            tf.logging.info("Modified Checkpoint name: %s" % var_name)
+            # tf.logging.info("Check: ")
+            # tf.logging.info("Var name: %s" % var.name)
+            # tf.logging.info("Checkpoint name: %s" % name)
+            # tf.logging.info("Modified Checkpoint name: %s" % var_name)
 
             if var.name[:-2] == var_name:
                 tf.logging.info("restoring %s -> %s" % (name, var.name))
@@ -422,6 +428,7 @@ def main(args):
             raise ValueError("Unkown python running environment!")
 
         count = 0
+        translation = []
         for outputs, scores in zip(restored_outputs, restored_scores):
             for output, score in zip(outputs, scores):
                 decoded = []
@@ -430,23 +437,27 @@ def main(args):
                         break
                     decoded.append(vocab[idx])
 
-                decoded = " ".join(decoded).replace(" ##", "").split()
+                decoded = " ".join(decoded).replace(" ##", "")
                 # 然后应该把尝试复原的内容加在这里即可……
                 # 参见https://huggingface.co/transformers/main_classes/tokenizer.html#transformers.PreTrainedTokenizer.clean_up_tokenization
-                decoded = " ".join(decoded)\
-                    .replace(" .", ".")\
-                    .replace(" ?", "?")\
-                    .replace(" !", "!")\
-                    .replace(" ,", ",")\
-                    .replace(" ' ", "'")\
-                    .replace(" n't", "n't")\
-                    .replace(" 'm", "'m")\
-                    .replace(" do not", " don't")\
-                    .replace(" 's", "'s")\
-                    .replace(" 've", "'ve")\
-                    .replace(" 're", "'re")\
-                    .replace("( ", "(")\
-                    .replace(" )", ")")
+
+                if args.restore:
+                    decoded = decoded\
+                        .replace(" .", ".")\
+                        .replace(" ?", "?")\
+                        .replace(" !", "!")\
+                        .replace(" ,", ",")\
+                        .replace(" ' ", "'")\
+                        .replace(" n't", "n't")\
+                        .replace(" 'm", "'m")\
+                        .replace(" do not", " don't")\
+                        .replace(" 's", "'s")\
+                        .replace(" 've", "'ve")\
+                        .replace(" 're", "'re")\
+                        .replace("( ", "(")\
+                        .replace(" )", ")")
+
+                translation.append(decoded.split(" "))
 
                 if not args.verbose:
                     outfile.write("%s\n" % decoded)
@@ -458,6 +469,22 @@ def main(args):
 
             count += 1
         outfile.close()
+
+        if args.reference:
+            # Read from file
+            if sys.version_info.major == 2:
+                infile = open(args.reference, "r")
+            elif sys.version_info.major == 3:
+                infile = open(args.reference, "r", encoding="utf-8")
+            else:
+                raise ValueError("Unknown python running environment!")
+
+            references = []
+            for line in infile:
+                references.append([line.split(" ")])
+
+            score = bleu.bleu(translation, references)
+            tf.logging.info("BLEU: %f" % score)
 
 if __name__ == "__main__":
     main(parse_args())

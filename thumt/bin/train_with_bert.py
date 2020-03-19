@@ -131,7 +131,7 @@ def default_parameters():
         num_tpu_cores=8,
         use_one_hot_embeddings=False,
         bert_config_file=None,
-
+        layer_indexes=[-1, -2, -3, -4],
     )
 
     return params
@@ -358,7 +358,7 @@ def restore_bert_variables(checkpoint):
         values[name] = tensor
 
     # The var_list here is from the model itself.
-    var_list = tf.trainable_variables()
+    var_list = tf.global_variables()
     ops = []
 
     for var in var_list:

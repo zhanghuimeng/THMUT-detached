@@ -44,7 +44,7 @@ def _save_validation_output(filename, id_list, decoded_sentences):
         for r in result_list:
             # tf.logging.info("id: %d" % r[0])
             # tf.logging.info(r[1])
-            f.write("%s\n" % r[1])
+            f.write("%s\n" % " ".join(r[1]))
 
 
 def _read_checkpoint_def(filename):
@@ -227,6 +227,8 @@ def _evaluate(eval_fn, input_fn, decode_fn, path, config, placeholder):
                         .replace(" 're", "'re")
                         .replace("( ", "(")
                         .replace(" )", ")")
+                        .replace(" :", ":")
+                        .split()
                 )
             else:
                 decoded_symbols[i] = " ".join(l).replace("@@ ", "").split()
